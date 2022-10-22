@@ -1,6 +1,6 @@
 {
   "name": "dart-tv",
-  "version": "2.0.3",
+  "version": "2.0.7",
   "private": true,
   "scripts": {
     "android": "react-native run-android",
@@ -21,6 +21,7 @@
     "expo-application": "~4.0.1",
     "expo-constants": "~13.0.1",
     "expo-device": "~4.1.0",
+    "expo-screen-orientation": "~4.1.1",
     "expo-updates": "~0.11.7",
     "react": "17.0.1",
     "react-native": "0.64.3",

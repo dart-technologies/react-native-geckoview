@@ -4,9 +4,11 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { AnalyticsProvider, createClient, useAnalytics } from '@segment/analytics-react-native';
 import * as Application from 'expo-application';
+import { DeviceType, getDeviceTypeAsync } from "expo-device";
+import * as ScreenOrientation from 'expo-screen-orientation';
 import * as React from 'react';
-import { useState } from 'react';
-import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import GeckoView from 'react-native-geckoview';
 import { FlatGrid } from 'react-native-super-grid';
 import * as Sentry from 'sentry-expo';
@@ -44,10 +46,37 @@ function FeaturedScreen({navigation}) {
     { name: 'TikTok', code: '#f39c12', uri: 'https://www.tiktok.com/', thumbnail: 'https://dart-discover.s3.amazonaws.com/thumbnails/TikTok-cover.png' },
   ]);
 
+  const window = Dimensions.get('window')
+  
+  async function getOrientation() {
+    const orientation = await ScreenOrientation.getOrientationAsync()
+    console.log('window:', window, 'orientation:', orientation)
+    console.log('itemDimension:', (window.width - 50) / 4)
+  }
+  getOrientation()
+
+  async function getDeviceType() {
+  //   const deviceType = await Device.getDeviceTypeAsync()
+    const deviceTypeMap = {
+      [DeviceType.UNKNOWN]: "unknown",
+      [DeviceType.PHONE]: "phone",
+      [DeviceType.TABLET]: "tablet",
+      [DeviceType.DESKTOP]: "desktop",
+      [DeviceType.TV]: "tv",
+    };
+    useEffect(() => {
+      getDeviceTypeAsync().then((deviceType) => {
+        console.log('deviceType:', deviceTypeMap[deviceType]);
+      });
+    }, []);
+    return null
+  }
+  getDeviceType()
+  
   return (
     <View style={ styles.container}>
       <FlatGrid
-        itemDimension={200}
+        itemDimension={(window.width - 50) / 4 }
         data={items}
         style={styles.gridView}
         // staticDimension={300}
@@ -198,9 +227,7 @@ export default function App() {
         >
           <Tab.Screen name="Featured" component={FeaturedStackScreen} />
           <Tab.Screen name="YouTube" component={WatchScreen} />
-          {/* <Tab.Screen name="Watch" component={WatchScreen} /> */}
           <Tab.Screen name="TIDAL" component={ListenScreen} />
-          {/* <Tab.Screen name="Listen" component={ListenScreen} /> */}
           <Tab.Screen name="Settings" component={SettingsScreen} />
         </Tab.Navigator>
       </NavigationContainer>
@@ -223,7 +250,7 @@ const styles = StyleSheet.create({
     // justifyContent: 'flex-end',
     borderRadius: 5,
     padding: 10,
-    height: 100,
+    height: 160,
   },
   itemName: {
     fontSize: 16,
@@ -236,14 +263,15 @@ const styles = StyleSheet.create({
   //   color: '#fff',
   // },
   dartLogo: {
-    height: 150,
-    width: 150,
+    height: 160,
+    width: 160,
     resizeMode: 'contain',
-    marginBottom: 5
+    marginBottom: 5,
+    marginBottom: 50
   },
   appVersion: {
     fontWeight: 'normal',
     fontSize: 16,
-    color: '#fff',
+    color: '#fff'
   }
 })
