@@ -1,0 +1,55 @@
+{
+  "expo": {
+    "name": "Dart TV",
+    "slug": "dart-tv",
+    "version": "2.0.3",
+    "orientation": "landscape",
+    "icon": "./assets/DART-no-alpha.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/DART-graphene-splash.jpg",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "art.dart.tv"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "package": "art.dart.tv"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "cb9df6dd-75ed-4d50-9bd4-628871c5975d"
+      }
+    },
+    "plugins": [
+      "sentry-expo"
+    ],
+    "hooks": {
+      "postPublish": [
+        {
+          "file": "sentry-expo/upload-sourcemaps",
+          "config": {
+            "organization": "dart-technologies",
+            "project": "dart-tv",
+            "authToken": "fb9e10099ec74d9a8d3d18ea9607bc47418778609eaf4baaa569be6aa36e8bbf"
+          }
+        }
+      ]
+    }
+  }
+}
