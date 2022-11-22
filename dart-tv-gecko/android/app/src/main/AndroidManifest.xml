@@ -1,19 +1,29 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="art.dart.tv">
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+  <uses-feature android:name="android.hardware.type.automotive" android:required="true"/>
+  <uses-feature android:name="android.hardware.wifi" android:required="false"/>
+  <uses-feature android:name="android.hardware.screen.portrait" android:required="false"/>
+  <uses-feature android:name="android.hardware.screen.landscape" android:required="false"/>
   <application android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:banner="@drawable/tv_banner" android:allowBackup="false" android:appCategory="audio" android:theme="@style/AppTheme" android:extractNativeLibs="true">
     <activity android:name=".MainActivity" android:label="@string/app_name" android:configChanges="keyboard|keyboardHidden|orientation|screenSize" android:windowSoftInputMode="adjustResize">
       <intent-filter>
         <action android:name="android.intent.action.MAIN"/>
-        <category android:name="android.intent.category.LAUNCHER"/>
         <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
       </intent-filter>
     </activity>
     <activity android:name="com.facebook.react.devsupport.DevSettingsActivity"/>
+    <service android:name=".MyMediaBrowserService" android:exported="true">
+      <intent-filter>
+        <action android:name="android.media.browse.MediaBrowserService"/>
+      </intent-filter>
+    </service>
     <meta-data android:name="expo.modules.updates.ENABLED" android:value="true"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH" android:value="ALWAYS"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS" android:value="0"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATE_URL" android:value="https://exp.host/@chownation/dart-tv"/>
     <meta-data android:name="expo.modules.updates.EXPO_SDK_VERSION" android:value="44.0.0"/>
+    <meta-data android:name="com.android.automotive" android:resource="@xml/automotive_app_desc"/>
+    <uses-library android:name="android-automotive-video" android:required="true"/>
   </application>
 </manifest>
