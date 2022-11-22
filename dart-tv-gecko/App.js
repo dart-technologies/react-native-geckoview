@@ -12,6 +12,7 @@ import { Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'rea
 import GeckoView from 'react-native-geckoview';
 import { FlatGrid } from 'react-native-super-grid';
 import * as Sentry from 'sentry-expo';
+import { StatusBar } from 'expo-status-bar';
 
 Sentry.init({
   dsn: 'https://2fe04faadb7e4798abdaa0ea0239c509@o54991.ingest.sentry.io/6247111',
@@ -44,6 +45,10 @@ function FeaturedScreen({navigation}) {
     { name: 'NPR', code: '#ecf0f1', uri: 'https://www.npr.org/', thumbnail: 'https://dart-discover.s3.amazonaws.com/thumbnails/NPR-cover.png' },
     { name: 'Blinkist', code: '#95a5a6', uri: 'https://dartdis.co/blinkist', thumbnail: 'https://dart-discover.s3.amazonaws.com/thumbnails/Blinkist-cover.png' },
     { name: 'TikTok', code: '#f39c12', uri: 'https://www.tiktok.com/', thumbnail: 'https://dart-discover.s3.amazonaws.com/thumbnails/TikTok-cover.png' },
+    { name: 'Dark Sky', code: '#f39c12', uri: 'https://darksky.net/', thumbnail: 'https://dart-discover.s3.amazonaws.com/thumbnails/Dark-Sky-cover.png' },
+    { name: 'Apple TV+', code: '#f39c12', uri: 'https://tv.apple.com/', thumbnail: 'https://dart-discover.s3.amazonaws.com/thumbnails/Apple-TV-cover.png' },
+    { name: 'Prime Video', code: '#f39c12', uri: 'https://www.amazon.com/Amazon-Video/b?ie=UTF8&node=2858778011', thumbnail: 'https://dart-discover.s3.amazonaws.com/thumbnails/Prime-Video-cover.png' },
+    { name: 'Hot Ones', code: '#f39c12', uri: 'https://firstwefeast.com/tag/hot-ones', thumbnail: 'https://dart-discover.s3.amazonaws.com/thumbnails/Hot-Ones-cover.png' },
   ]);
 
   const window = Dimensions.get('window')
@@ -56,7 +61,6 @@ function FeaturedScreen({navigation}) {
   getOrientation()
 
   async function getDeviceType() {
-  //   const deviceType = await Device.getDeviceTypeAsync()
     const deviceTypeMap = {
       [DeviceType.UNKNOWN]: "unknown",
       [DeviceType.PHONE]: "phone",
@@ -77,6 +81,7 @@ function FeaturedScreen({navigation}) {
     <View style={ styles.container}>
       <FlatGrid
         itemDimension={(window.width - 50) / 4 }
+        // itemDimension={200}
         data={items}
         style={styles.gridView}
         // staticDimension={300}
@@ -180,6 +185,15 @@ const getActiveRouteName = state => {
 
 export default function App() {
   const [routeName, setRouteName] = useState('Unknown');
+  
+  // const [device, setDevice] = useState(undefined)
+  // //Use `useEffect` to prevent recurring checking
+  // useEffect(() => {
+  //   getDeviceType().then((a) => {
+  //     //Update (rerender) the component with the device info
+  //     setDevice(a)
+  //   })
+  // }, [])
 
   return (
     <AnalyticsProvider client={segmentClient}>
@@ -231,6 +245,7 @@ export default function App() {
           <Tab.Screen name="Settings" component={SettingsScreen} />
         </Tab.Navigator>
       </NavigationContainer>
+      {/* <StatusBar hidden={true} /> */}
     </AnalyticsProvider>
   );
 }

@@ -1,3 +1,4 @@
 <automotiveApp>
-  <uses name="video"/>
+    <!-- <uses name="media"/> -->
+    <uses name="video"/>
 </automotiveApp>
