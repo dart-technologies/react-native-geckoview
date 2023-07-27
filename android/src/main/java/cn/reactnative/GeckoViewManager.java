@@ -8,6 +8,8 @@ import androidx.annotation.Nullable;
 import org.mozilla.geckoview.GeckoRuntime;
 import org.mozilla.geckoview.GeckoSession;
 import org.mozilla.geckoview.GeckoView;
+import org.mozilla.geckoview.GeckoSession.Loader;
+import org.mozilla.geckoview.GeckoSessionSettings;
 
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.uimanager.SimpleViewManager;
@@ -36,7 +38,14 @@ public class GeckoViewManager extends SimpleViewManager<View> {
     @Override
     public View createViewInstance(ThemedReactContext c) {
         GeckoView view = new GeckoView(c);
+        GeckoSessionSettings sessionSettings = new GeckoSessionSettings();
+        sessionSettings.setUserAgentMode(1);
         GeckoSession session = new GeckoSession();
+        
+        // System.out.println("sessionSettings:" + sessionSettings.getUserAgentMode());
+        // sessionSettings.setUserAgentMode(1);
+        // System.out.println("sessionSettings:" + sessionSettings.getUserAgentMode());
+
         if (mGeckoRuntime == null) {
             mGeckoRuntime = GeckoRuntime.create(c);
         }
@@ -52,11 +61,12 @@ public class GeckoViewManager extends SimpleViewManager<View> {
     public void setSource(GeckoView view, @Nullable ReadableMap source) {
         GeckoSession session = view.getSession();
         if (source != null) {
-
+            
             if (source.hasKey("html")) {
                 String html = source.getString("html");
 //                String baseUrl = source.hasKey("baseUrl") ? source.getString("baseUrl") : "";
-                session.loadString(html, HTML_MIME_TYPE);
+                // session.loadString(html, HTML_MIME_TYPE);
+                session.load(new Loader().uri(html));
                 return;
             }
             if (source.hasKey("uri")) {
@@ -102,10 +112,12 @@ public class GeckoViewManager extends SimpleViewManager<View> {
                 }
                 view.loadUrl(url, headerMap);
                 */
-                session.loadUri(url);
+                // session.loadUri(url);
+                session.load(new Loader().uri(url));
                 return;
             }
         }
-        session.loadUri(BLANK_URL);
+        // session.loadUri(BLANK_URL);
+        session.load(new Loader().uri(BLANK_URL));
     }
 }
