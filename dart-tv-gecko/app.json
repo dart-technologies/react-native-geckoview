@@ -2,7 +2,7 @@
   "expo": {
     "name": "Dart TV",
     "slug": "dart-tv",
-    "version": "2.30.20",
+    "version": "2.30.25",
     "orientation": "landscape",
     "icon": "./assets/DART-no-alpha.png",
     "userInterfaceStyle": "light",
