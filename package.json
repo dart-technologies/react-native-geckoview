@@ -1,6 +1,6 @@
 {
   "name": "dart-tv",
-  "version": "2.30.20",
+  "version": "2.30.25",
   "private": true,
   "scripts": {
     "android": "react-native run-android",
