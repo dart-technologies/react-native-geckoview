@@ -70,6 +70,10 @@ android {
     }
 }
 
+tasks.withType(Javadoc).all {
+    enabled = false
+}
+
 repositories {
     // ref: https://www.baeldung.com/maven-local-repository
     mavenLocal()
