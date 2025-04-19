@@ -38,8 +38,6 @@ public class GeckoViewManager extends SimpleViewManager<View> {
     @Override
     public View createViewInstance(ThemedReactContext c) {
         GeckoView view = new GeckoView(c);
-        GeckoSessionSettings sessionSettings = new GeckoSessionSettings();
-        sessionSettings.setUserAgentMode(1);
         GeckoSession session = new GeckoSession();
         
         // System.out.println("sessionSettings:" + sessionSettings.getUserAgentMode());
@@ -57,16 +55,32 @@ public class GeckoViewManager extends SimpleViewManager<View> {
         return view;
     }
 
+    @Override
+    public void onDropViewInstance(View view) {
+        GeckoView geckoView = (GeckoView) view;
+        GeckoSession session = geckoView.getSession();
+        if (session != null) {
+            session.close();
+        }
+        // Note: We are not closing the GeckoRuntime here. See discussion.
+        super.onDropViewInstance(view);
+    }
+
     @ReactProp(name = "source")
     public void setSource(GeckoView view, @Nullable ReadableMap source) {
         GeckoSession session = view.getSession();
+        if (session == null) {
+             // Handle the case where session might be null (e.g., already closed)
+             System.err.println("GeckoViewManager: Attempted to setSource on a null session.");
+             return;
+        }
         if (source != null) {
             
             if (source.hasKey("html")) {
                 String html = source.getString("html");
 //                String baseUrl = source.hasKey("baseUrl") ? source.getString("baseUrl") : "";
                 // session.loadString(html, HTML_MIME_TYPE);
-                session.load(new Loader().uri(html));
+                session.load(new Loader().uri("data:" + HTML_MIME_TYPE + ";charset=" + HTML_ENCODING + "," + html));
                 return;
             }
             if (source.hasKey("uri")) {
