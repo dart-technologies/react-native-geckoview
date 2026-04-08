@@ -1,14 +1,54 @@
-README
-======
+# Android Native Module
 
-If you want to publish the lib as a maven dependency, follow these steps before publishing a new version to npm:
+Kotlin implementation of GeckoView wrapper for React Native.
 
-1. Be sure to have the Android [SDK](https://developer.android.com/studio/index.html) and [NDK](https://developer.android.com/ndk/guides/index.html) installed
-2. Be sure to have a `local.properties` file in this folder that points to the Android SDK and NDK
+## Structure
+
 ```
-ndk.dir=/Users/{username}/Library/Android/sdk/ndk-bundle
-sdk.dir=/Users/{username}/Library/Android/sdk
+src/main/kotlin/com/reactnative/geckoview/
+├── GeckoViewPackage.kt          # Package registration
+├── GeckoViewManager.kt          # View manager (Paper/Fabric)
+├── GeckoViewManagerImpl.kt      # View manager implementation
+├── GeckoViewModule.kt           # Native module commands
+├── GeckoSessionManager.kt       # Session lifecycle
+├── GeckoRuntimeManager.kt       # Singleton runtime
+├── MediaDelegate.kt             # Audio focus & media
+├── GeckoViewNavigationDelegate.kt
+├── GeckoViewProgressDelegate.kt
+├── GeckoViewPermissionDelegate.kt
+├── GeckoViewPromptDelegate.kt
+├── GeckoViewContentDelegate.kt
+├── ContentBlockingController.kt
+└── WebExtensionController.kt
 ```
-3. Delete the `maven` folder
-4. Run `./gradlew installArchives`
-5. Verify that latest set of generated files is in the maven folder with the correct version number
+
+## Building
+
+### Debug Build
+```bash
+cd example/android
+./gradlew :react-native-geckoview:assembleDebug
+```
+
+### Run Tests (191 tests)
+```bash
+./gradlew :react-native-geckoview:testDebugUnitTest
+```
+
+### Coverage Report
+```bash
+./gradlew :react-native-geckoview:jacocoTestReport
+```
+
+## Fabric Support
+
+When `newArchEnabled=true`:
+- CMake builds `libreact_codegen_GeckoViewSpec.so`
+- Autolinking registers `GeckoViewComponentDescriptor`
+- See `src/main/jni/` for native build files
+
+## Dependencies
+
+- GeckoView 143.0.20250908174027
+- Kotlin 1.9+
+- React Native 0.81+

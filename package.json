@@ -1,16 +1,16 @@
 {
   "name": "react-native-geckoview",
   "title": "React Native GeckoView",
-  "version": "0.0.6",
-  "description": "TODO",
-  "main": "index.js",
+  "version": "0.1.0",
+  "description": "GeckoView component for React Native with Fabric support",
+  "main": "index.tsx",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sunnylqm/react-native-geckoview.git",
-    "baseUrl": "https://github.com/sunnylqm/react-native-geckoview"
+    "url": "git+https://github.com/dart-technologies/react-native-geckoview.git",
+    "baseUrl": "https://github.com/dart-technologies/react-native-geckoview"
   },
   "keywords": [
     "react-native",
@@ -18,18 +18,31 @@
     "webview"
   ],
   "author": {
-    "name": "sunnylqm",
-    "email": "sunnylqm@gmail.com"
+    "name": "michow",
+    "email": "hello@dart.art"
   },
   "license": "MIT",
   "licenseFilename": "LICENSE",
   "readmeFilename": "README.md",
+  "dependencies": {
+    "@babel/runtime": "^7.24.0"
+  },
   "peerDependencies": {
-    "react": "^16.9.0",
-    "react-native": ">=0.60"
+    "react": "^19.0.0",
+    "react-native": ">=0.81.0"
+  },
+  "codegenConfig": {
+    "name": "GeckoViewSpec",
+    "type": "components",
+    "jsSrcsDir": "src",
+    "android": {
+      "javaPackageName": "com.reactnative.geckoview"
+    }
   },
   "devDependencies": {
-    "react": "16.9.0",
-    "react-native": "0.61.5"
+    "@types/react": "^19.0.0",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "typescript": "^5.0.0"
   }
 }

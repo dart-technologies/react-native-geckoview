@@ -10,15 +10,19 @@
 //   original location:
 //   - https://github.com/facebook/react-native/blob/0.58-stable/local-cli/templates/HelloWorld/android/app/build.gradle
 
-def DEFAULT_COMPILE_SDK_VERSION = 28
-// def DEFAULT_COMPILE_SDK_VERSION = 30
-def DEFAULT_BUILD_TOOLS_VERSION = '28.0.3'
-// def DEFAULT_BUILD_TOOLS_VERSION = '30.0.2'
-def DEFAULT_MIN_SDK_VERSION = 16
-// def DEFAULT_MIN_SDK_VERSION = 21
-def DEFAULT_TARGET_SDK_VERSION = 28
-// def DEFAULT_TARGET_SDK_VERSION = 30
+def DEFAULT_COMPILE_SDK_VERSION = 35
+def DEFAULT_BUILD_TOOLS_VERSION = '35.0.0'
+def DEFAULT_MIN_SDK_VERSION = 24  // React Native 0.81+ requires API 24+
+def DEFAULT_TARGET_SDK_VERSION = 35
+
+def isNewArchitectureEnabled() {
+    if (rootProject.hasProperty("newArchEnabled")) {
+        return rootProject.newArchEnabled == "true"
+    }
+    return project.hasProperty("newArchEnabled") && project.newArchEnabled == "true"
+}
 // https://maven.mozilla.org/?prefix=maven2/org/mozilla/geckoview/geckoview/
+// Version History (for reference):
 // def DEFAULT_GECKOVIEW_VERSION = '72.0.20200107212822'
 // def DEFAULT_GECKOVIEW_VERSION = '85.0.20210208133944'
 // def DEFAULT_GECKOVIEW_VERSION = '86.0.20210215141125'
@@ -27,15 +31,16 @@ def DEFAULT_TARGET_SDK_VERSION = 28
 // def DEFAULT_GECKOVIEW_VERSION = '101.0.20220608170832'
 // def DEFAULT_GECKOVIEW_VERSION = '96.0.20220126154723'
 // def DEFAULT_GECKOVIEW_VERSION = '99.0.20220411174855'
-def DEFAULT_GECKOVIEW_VERSION = '97.0.20220304162637' // works
+// def DEFAULT_GECKOVIEW_VERSION = '97.0.20220304162637' // works (previous stable)
 // def DEFAULT_GECKOVIEW_VERSION = '98.0.20220322144853' // fails
+
+// Current version - upgraded 2025-12-02
+// See: https://mozilla.github.io/geckoview/javadoc/mozilla-central/org/mozilla/geckoview/doc-files/CHANGELOG
+def DEFAULT_GECKOVIEW_VERSION = '143.0.20250908174027' // v143 - major upgrade from v97
 
 def safeExtGet(prop, fallback) {
     rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
 }
-
-apply plugin: 'com.android.library'
-apply plugin: 'maven-publish'
 
 buildscript {
     // The Android Gradle plugin is only required when opening the android folder stand-alone.
@@ -45,28 +50,88 @@ buildscript {
     if (project == rootProject) {
         repositories {
             google()
-            jcenter()
+            mavenCentral()  // jcenter() is deprecated
         }
         dependencies {
-            classpath 'com.android.tools.build:gradle:3.4.1'
+            classpath 'com.android.tools.build:gradle:8.9.1'
+            classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.10'
+            classpath 'com.facebook.react:react-native-gradle-plugin'
         }
     }
 }
 
 apply plugin: 'com.android.library'
 apply plugin: 'maven-publish'
+apply plugin: 'kotlin-android'
+apply plugin: 'jacoco'  // Test coverage reporting
+
+if (isNewArchitectureEnabled()) {
+    apply plugin: 'com.facebook.react'
+}
+
+// JaCoCo configuration for test coverage
+jacoco {
+    toolVersion = "0.8.10"
+}
 
 android {
+    namespace 'com.reactnative.geckoview'  // Required for Android Gradle Plugin 8.x
     compileSdkVersion safeExtGet('compileSdkVersion', DEFAULT_COMPILE_SDK_VERSION)
     buildToolsVersion safeExtGet('buildToolsVersion', DEFAULT_BUILD_TOOLS_VERSION)
     defaultConfig {
         minSdkVersion safeExtGet('minSdkVersion', DEFAULT_MIN_SDK_VERSION)
         targetSdkVersion safeExtGet('targetSdkVersion', DEFAULT_TARGET_SDK_VERSION)
-        versionCode 1
+        versionCode 27
         versionName "1.0"
     }
     lintOptions {
         abortOnError false
+    }
+    sourceSets {
+        main {
+            java.srcDirs = [
+                'src/main/java',
+                'src/main/kotlin'
+            ]
+            if (isNewArchitectureEnabled()) {
+                java.srcDirs += [
+                    'src/newarch/kotlin',
+                    "$buildDir/generated/source/codegen/java"
+                ]
+            } else {
+                java.srcDirs += [
+                    'src/paper/kotlin'
+                ]
+            }
+        }
+    }
+}
+
+
+
+if (isNewArchitectureEnabled()) {
+    react {
+        libraryName = "reactnativegeckoview"
+        root = project.file("../example/")  // Point to where react-native is installed
+        jsRootDir = file("../src")
+        codegenJavaPackageName = "com.reactnative.geckoview"
+    }
+    afterEvaluate {
+        // Ensure codegen runs before CMake tasks
+        // CMake needs the generated sources to exist before configuration
+        tasks.matching { task ->
+            task.name.startsWith("configureCMake") || task.name.startsWith("buildCMake")
+        }.configureEach { task ->
+            task.dependsOn("generateCodegenArtifactsFromSchema")
+        }
+        
+        // Ensure codegen runs before Kotlin/Java compilation
+        tasks.matching { task ->
+            task.name.startsWith("compile") &&
+                    (task.name.contains("Kotlin") || task.name.contains("JavaWithJavac"))
+        }.configureEach { task ->
+            task.dependsOn("generateCodegenArtifactsFromSchema")
+        }
     }
 }
 
@@ -85,15 +150,27 @@ repositories {
         // Android JSC is installed from npm
         url "$rootDir/../node_modules/jsc-android/dist"
     }
+    maven {
+        // Mozilla GeckoView releases
+        url "https://maven.mozilla.org/maven2/"
+    }
     google()
-    jcenter()
+    mavenCentral()  // jcenter() is deprecated
 }
 
 dependencies {
     def geckoviewVersion = safeExtGet('geckoviewVersion', DEFAULT_GECKOVIEW_VERSION)
     //noinspection GradleDynamicVersion
-    implementation 'com.facebook.react:react-native:+'  // From node_modules
+    implementation 'com.facebook.react:react-android:+'  // Modern React Native dependency
     implementation "org.mozilla.geckoview:geckoview:${geckoviewVersion}"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.22"
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.mockito:mockito-core:5.11.0'
+    testImplementation 'org.mockito:mockito-inline:5.2.0'
+    testImplementation 'org.mockito.kotlin:mockito-kotlin:5.2.1'
+    testImplementation 'io.mockk:mockk:1.13.8'  // For mocking Kotlin objects
+    testImplementation 'org.robolectric:robolectric:4.11.1'
 }
 
 def configureReactNativePom(def pom) {
@@ -103,7 +180,7 @@ def configureReactNativePom(def pom) {
         name packageJson.title
         artifactId packageJson.name
         version = packageJson.version
-        group = "cn.reactnative"
+        group = "com.reactnative.geckoview"
         description packageJson.description
         url packageJson.repository.baseUrl
 
@@ -135,7 +212,7 @@ afterEvaluate { project ->
     }
 
     task androidJavadocJar(type: Jar, dependsOn: androidJavadoc) {
-        archiveClassifier = 'javadoc'
+        archiveClassifier.set('javadoc')
         from androidJavadoc.destinationDir
     }
 
@@ -150,7 +227,7 @@ afterEvaluate { project ->
         def javaCompileTask = variant.javaCompileProvider.get()
 
         task "jar${name}"(type: Jar, dependsOn: javaCompileTask) {
-            from javaCompileTask.destinationDir
+            from javaCompileTask.destinationDirectory.get().asFile  // destinationDir deprecated
         }
     }
 
@@ -159,12 +236,74 @@ afterEvaluate { project ->
         archives androidJavadocJar
     }
 
-    task installArchives(type: Upload) {
-        configuration = configurations.archives
-        // repositories.mavenDeployer {
-        //     // Deploy to react-native-event-bridge/maven, ready to publish to npm
-        //     repository url: "file://${projectDir}/../android/maven"
-        //     configureReactNativePom pom
-        // }
+    // Upload task type deprecated and removed in modern Gradle versions
+    // Not needed for standard builds, only for maven publishing
+    // task installArchives(type: Upload) {
+    //     configuration = configurations.archives
+    //     // repositories.mavenDeployer {
+    //     //     // Deploy to react-native-event-bridge/maven, ready to publish to npm
+    //     //     //     repository url: "file://${projectDir}/../android/maven"
+    //     //     //     configureReactNativePom pom
+    //     // }
+    // }
+}
+
+// Test coverage reporting task
+tasks.register('jacocoTestReport', JacocoReport) {
+    dependsOn 'testDebugUnitTest'
+    
+    reports {
+        xml.required = true
+        html.required = true
+        csv.required = false
+        
+        // Output directories
+        xml.outputLocation = file("${buildDir}/reports/jacoco/test/jacocoTestReport.xml")
+        html.outputLocation = file("${buildDir}/reports/jacoco/test/html")
+    }
+    
+    def fileFilter = [
+        '**/R.class',
+        '**/R$*.class',
+        '**/BuildConfig.*',
+        '**/Manifest*.*',
+        '**/*Test*.*',
+        'android/**/*.*',
+        '**/*$ViewInjector*.*',
+        '**/*$ViewBinder*.*',
+        '**/Lambda$*.class',
+        '**/Lambda.class',
+        '**/*Lambda.class',
+        '**/*Lambda*.class',
+        '**/*_MembersInjector.class',
+        '**/Dagger*Component*.*',
+        '**/*Module_*Factory.class',
+        '**/di/module/*',
+        '**/*_Factory*.*',
+        '**/*Module*.*',
+        '**/*Dagger*.*',
+        '**/*Hilt*.*'
+    ]
+    
+    def debugTree = fileTree(
+        dir: "${buildDir}/tmp/kotlin-classes/debug",
+        excludes: fileFilter
+    )
+    
+    sourceDirectories.setFrom(files([
+        'src/main/kotlin',
+        'src/main/java'
+    ]))
+    
+    classDirectories.setFrom(files([debugTree]))
+    executionData.setFrom(fileTree(buildDir) {
+        include '**/*.exec'
+    })
+}
+
+tasks.withType(Test) {
+    jacoco {
+        includeNoLocationClasses = true
+        excludes = ['jdk.internal.*']
     }
 }

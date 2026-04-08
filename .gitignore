@@ -1,22 +1,90 @@
-# OSX
-#
+# ===================
+# OS Generated Files
+# ===================
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
 
-# node.js
-#
+# ===================
+# Node.js
+# ===================
 node_modules/
-npm-debug.log
+npm-debug.log*
 yarn-error.log
+yarn-debug.log
+.yarn/
+.pnp.*
 
-# Android/IntelliJ
-#
+# ===================
+# Android / IntelliJ
+# ===================
 build/
-.idea
-.gradle
+.idea/
+.gradle/
 local.properties
 *.iml
+*.hprof
 
 # BUCK
 buck-out/
 \.buckd/
 *.keystore
+!debug.keystore
+
+# CMake / NDK
+.cxx/
+.externalNativeBuild/
+
+# ===================
+# iOS (for future)
+# ===================
+ios/Pods/
+*.xcworkspace
+!*.xcworkspace/contents.xcworkspacedata
+xcuserdata/
+*.xcuserstate
+*.moved-aside
+DerivedData/
+
+# ===================
+# Test Coverage
+# ===================
+coverage/
+example/coverage/
+android/build/reports/
+*.exec
+*.gcda
+*.gcno
+*.lcov
+
+# ===================
+# Build Artifacts
+# ===================
+*.tgz
+lib/
+dist/
+
+# ===================
+# Environment / Secrets
+# ===================
+.env
+.env.*
+!.env.example
+*.local
+
+# ===================
+# Editor / IDE
+# ===================
+.vscode/
+*.swp
+*.swo
+*~
+
+# ===================
+# Logs
+# ===================
+logs/
+*.log

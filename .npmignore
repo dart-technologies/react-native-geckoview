@@ -1,1 +1,25 @@
-example
+# Exclude example app to prevent circular symlink issues
+example/
+
+# Exclude build artifacts
+android/build/
+android/.gradle/
+android/.cxx/
+
+# Exclude development files
+.git/
+.github/
+.idea/
+*.iml
+.vscode/
+
+# Exclude documentation that doesn't need to be in the package
+docs/
+flutter-android/
+
+# Exclude scripts and agent files
+scripts/
+.agent/
+
+# Exclude Gemini artifacts
+.gemini/
