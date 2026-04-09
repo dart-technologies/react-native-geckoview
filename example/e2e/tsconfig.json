@@ -1,0 +1,17 @@
+{
+    "extends": "../tsconfig.json",
+    "compilerOptions": {
+        "types": [
+            "detox",
+            "jest"
+        ],
+        "lib": [
+            "es6"
+        ],
+        "module": "commonjs"
+    },
+    "include": [
+        "**/*.ts",
+        "**/*.js"
+    ]
+}
