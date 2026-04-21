@@ -1,11 +1,12 @@
 package com.reactnative.geckoview
 
-import android.os.SystemClock
 import android.util.Log
+import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
 import com.facebook.react.bridge.Arguments
 import org.json.JSONObject
+import org.mozilla.geckoview.GeckoView
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.WebExtension
@@ -13,65 +14,6 @@ import org.mozilla.geckoview.WebExtension
 class WebExtensionController(private val runtime: GeckoRuntime) {
     private var extension: WebExtension? = null
     private var activePort: WebExtension.Port? = null
-
-    private fun simulateClick(x: Double, y: Double): Boolean {
-        val views = GeckoSessionManager.getAllViews()
-        if (views.isEmpty()) {
-            Log.w(TAG, "simulateClick: no GeckoView instances available")
-            return false
-        }
-
-        val targetView = views.firstOrNull { it.hasFocus() } ?: views.first()
-
-        targetView.post {
-            try {
-                val width = targetView.width
-                val height = targetView.height
-                if (width <= 0 || height <= 0) {
-                    Log.w(TAG, "simulateClick: view not laid out (w=$width h=$height)")
-                    return@post
-                }
-
-                val maxX = (width - 1).coerceAtLeast(0).toDouble()
-                val maxY = (height - 1).coerceAtLeast(0).toDouble()
-                val clampedX = x.coerceIn(0.0, maxX).toFloat()
-                val clampedY = y.coerceIn(0.0, maxY).toFloat()
-
-                val downTime = SystemClock.uptimeMillis()
-                val down = MotionEvent.obtain(
-                    downTime,
-                    downTime,
-                    MotionEvent.ACTION_DOWN,
-                    clampedX,
-                    clampedY,
-                    0
-                ).apply {
-                    source = InputDevice.SOURCE_TOUCHSCREEN
-                }
-
-                val up = MotionEvent.obtain(
-                    downTime,
-                    downTime + 32,
-                    MotionEvent.ACTION_UP,
-                    clampedX,
-                    clampedY,
-                    0
-                ).apply {
-                    source = InputDevice.SOURCE_TOUCHSCREEN
-                }
-
-                targetView.dispatchTouchEvent(down)
-                targetView.dispatchTouchEvent(up)
-
-                down.recycle()
-                up.recycle()
-            } catch (e: Exception) {
-                Log.e(TAG, "simulateClick failed", e)
-            }
-        }
-
-        return true
-    }
 
     fun installExtension(assetPath: String, onInstalled: ((Boolean, Throwable?) -> Unit)? = null) {
         val builtInUri = "resource://android/assets/$assetPath"
@@ -107,21 +49,72 @@ class WebExtensionController(private val runtime: GeckoRuntime) {
         }
     }
 
+    private fun findBestTargetView(): GeckoView? {
+        val views = GeckoSessionManager.getAllViews()
+        if (views.isEmpty()) return null
+
+        for (view in views) {
+            if (view.hasFocus()) return view
+        }
+
+        for (view in views) {
+            if (view.isAttachedToWindow) return view
+        }
+
+        return views[0]
+    }
+
+    private fun simulateClick(view: GeckoView, x: Double, y: Double) {
+        view.post {
+            try {
+                view.requestFocus()
+
+                val maxX = (view.width - 1).coerceAtLeast(0).toFloat()
+                val maxY = (view.height - 1).coerceAtLeast(0).toFloat()
+                val localX = x.toFloat().coerceIn(0f, maxX)
+                val localY = y.toFloat().coerceIn(0f, maxY)
+
+                val downTime = SystemClock.uptimeMillis()
+                val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, localX, localY, 0)
+                down.source = InputDevice.SOURCE_TOUCHSCREEN
+
+                val upTime = downTime + 16
+                val up = MotionEvent.obtain(downTime, upTime, MotionEvent.ACTION_UP, localX, localY, 0)
+                up.source = InputDevice.SOURCE_TOUCHSCREEN
+
+                view.dispatchTouchEvent(down)
+                view.dispatchTouchEvent(up)
+
+                down.recycle()
+                up.recycle()
+            } catch (e: Throwable) {
+                Log.e(TAG, "Failed to simulate click", e)
+            }
+        }
+    }
+
     private val messageDelegate = object : WebExtension.MessageDelegate {
         override fun onMessage(nativeApp: String, message: Any, sender: WebExtension.MessageSender): GeckoResult<Any>? {
             Log.d(TAG, "Received message from extension (nativeApp=$nativeApp): $message")
             try {
                 if (message is JSONObject) {
-                    val type = message.optString("type", "")
+                    val type = message.optString("type")
                     if (type == "simulateClick") {
-                        val x = if (message.has("x")) message.optDouble("x", Double.NaN) else Double.NaN
-                        val y = if (message.has("y")) message.optDouble("y", Double.NaN) else Double.NaN
+                        val x = message.optDouble("x", Double.NaN)
+                        val y = message.optDouble("y", Double.NaN)
+
                         if (x.isFinite() && y.isFinite()) {
-                            simulateClick(x, y)
-                            return GeckoResult.fromValue(null)
+                            val view = findBestTargetView()
+                            if (view != null) {
+                                simulateClick(view, x, y)
+                            } else {
+                                Log.w(TAG, "simulateClick requested but no GeckoView instances are mounted")
+                            }
+                        } else {
+                            Log.w(TAG, "simulateClick requested without x/y: $message")
                         }
-                        Log.w(TAG, "simulateClick: invalid coordinates x=$x y=$y")
-                        return GeckoResult.fromValue(null)
+
+                        return null
                     }
                 }
 

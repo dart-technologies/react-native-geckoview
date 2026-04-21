@@ -71,7 +71,18 @@ class GeckoViewManagerImpl {
     }
 
     fun setCookieBannerMode(view: GeckoView, value: String?) {
-        // TODO: Implement cookie banner mode
+        val mode = when (value?.trim()?.lowercase()) {
+            "reject" -> 1
+            "accept" -> 2
+            else -> 0
+        }
+
+        try {
+            val runtime = GeckoRuntimeManager.getRuntime(view.context.applicationContext)
+            ContentBlockingController(runtime).setCookieBannerMode(mode)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to set cookie banner mode: $value", e)
+        }
     }
 
     private fun getModule(context: ThemedReactContext): GeckoViewModule? {

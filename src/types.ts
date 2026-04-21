@@ -49,6 +49,7 @@ export interface GeckoViewRef {
     goBack: () => void;
     goForward: () => void;
     stop: () => void;
+    closeSession: () => void;
     shutdown: () => void;
     installWebExtension: (assetPath: string) => Promise<void>;
     sendWebExtensionMessage: (message: string) => void;

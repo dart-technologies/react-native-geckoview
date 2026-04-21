@@ -3,8 +3,25 @@ package com.reactnative.geckoview
 import android.util.Log
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
+import com.facebook.react.uimanager.UIManagerHelper
+import com.facebook.react.uimanager.events.Event
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
+
+/**
+ * Generic view-level event for GeckoView. Wraps an event name + payload so a
+ * single class can carry every `onGeckoXxx` → `topGeckoXxx` dispatch. Uses the
+ * `Event(viewTag)` constructor (surfaceId defaults to -1); the EventDispatcher
+ * resolves the surfaceId from the viewTag for both Fabric and legacy renderers.
+ */
+private class GeckoGenericEvent(
+    viewTag: Int,
+    private val nativeEventName: String,
+    private val params: WritableMap?,
+) : Event<GeckoGenericEvent>(viewTag) {
+    override fun getEventName(): String = nativeEventName
+    override fun getEventData(): WritableMap? = params
+}
 
 class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
     private val pendingPrompts = mutableMapOf<String, PromptInfo>()
@@ -38,6 +55,18 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
     @ReactMethod
     fun stop(sessionKey: String) {
         GeckoSessionManager.getOrCreateSession(sessionKey).stop()
+    }
+
+    @ReactMethod
+    fun closeSession(sessionKey: String) {
+        // GeckoSession.close() asserts on the UI thread (ThreadUtils.assertOnUiThread).
+        // @ReactMethod calls run on the native modules queue (`mqt_v_native`), so
+        // calling through unguarded throws IllegalThreadStateException — which the
+        // bridgeless runtime treats as a fatal host exception and destroys the
+        // ReactHost, leaving the user on a white screen after back navigation.
+        UiThreadUtil.runOnUiThread {
+            GeckoSessionManager.releaseSession(sessionKey)
+        }
     }
 
     @ReactMethod
@@ -255,9 +284,18 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             eventName
         }
         Log.d(TAG, "Sending view event: $nativeEventName to viewId: $viewId")
-        val context = reactApplicationContext
-        val dispatcher = context.getJSModule(com.facebook.react.uimanager.events.RCTEventEmitter::class.java)
-        dispatcher.receiveEvent(viewId, nativeEventName, params)
+        // Legacy `getJSModule(RCTEventEmitter)` throws IllegalArgumentException on
+        // BridgelessReactContext (New Architecture) — every GeckoView event (page
+        // start/stop/location-change) would emit an unhandled SoftException, and
+        // enough of them during unmount destroys the React host, leaving a white
+        // screen. UIManagerHelper.getEventDispatcherForReactTag works in both
+        // bridge and bridgeless modes; it returns null if the view is unmounted.
+        val dispatcher = UIManagerHelper.getEventDispatcherForReactTag(reactApplicationContext, viewId)
+        if (dispatcher == null) {
+            Log.w(TAG, "No EventDispatcher for viewTag=$viewId, dropping $nativeEventName")
+            return
+        }
+        dispatcher.dispatchEvent(GeckoGenericEvent(viewId, nativeEventName, params))
     }
 
     companion object {

@@ -67,7 +67,7 @@ class GeckoViewErrorBoundary extends React.Component<
     { children: React.ReactNode; style?: ViewProps['style'] },
     { error: Error | null }
 > {
-    state = { error: null };
+    state: { error: Error | null } = { error: null };
 
     static getDerivedStateFromError(error: Error) {
         return { error };
@@ -129,6 +129,7 @@ const GeckoView = forwardRef<GeckoViewRef, GeckoViewProps>((props, ref) => {
         goBack: () => GeckoViewModule.goBack(sessionKey),
         goForward: () => GeckoViewModule.goForward(sessionKey),
         stop: () => GeckoViewModule.stop(sessionKey),
+        closeSession: () => GeckoViewModule.closeSession(sessionKey),
         shutdown: () => GeckoViewModule.shutdown(),
         installWebExtension: (assetPath: string) => GeckoViewModule.installWebExtension(assetPath),
         sendWebExtensionMessage: (message: string) => GeckoViewModule.sendWebExtensionMessage(message),
@@ -148,8 +149,12 @@ const GeckoView = forwardRef<GeckoViewRef, GeckoViewProps>((props, ref) => {
 
     useEffect(() => {
         return () => {
-            // Optional: cleanup session on unmount?
-            // GeckoViewModule.closeSession(sessionKey);
+            // Intentionally do NOT close the session on unmount. Sessions are pooled in
+            // GeckoSessionManager (keyed by sessionKey) and deliberately outlive GeckoView
+            // mounts so consumers can remount to resume state during navigation transitions.
+            // Auto-closing here would blow away session state on every re-render and force
+            // getOrCreateSession to silently spin up a blank replacement on remount.
+            // Call ref.closeSession() explicitly when the session is truly done.
         };
     }, [sessionKey]);
 
