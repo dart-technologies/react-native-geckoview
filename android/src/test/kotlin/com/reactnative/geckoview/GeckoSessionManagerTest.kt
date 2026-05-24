@@ -7,6 +7,7 @@ import io.mockk.mockkObject
 import io.mockk.unmockkAll
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -141,49 +142,210 @@ class GeckoSessionManagerTest {
         assertTrue(sessions.containsKey("test-2"))
     }
 
-    // TODO: Fix thread safety test - assertion count mismatch in mock environment
-    /*
+    /**
+     * Concurrency regression for Finding #12.
+     *
+     * Previously `sessions` was a plain `mutableMapOf<String, GeckoSession>()`
+     * and `init()` iterated without synchronization — a second thread
+     * mutating `sessions` mid-iteration would throw
+     * `ConcurrentModificationException`. With `ConcurrentHashMap` +
+     * `@Synchronized init()`, the stress test below must never surface a CME.
+     *
+     * We exercise the specific pattern that previously failed: one thread
+     * hammering `init()` (which iterates `sessions.forEach`) while another
+     * mutates the session map via `releaseSession`. `GeckoSession`
+     * instantiation is skipped because it would require running on Robolectric's
+     * main thread; instead we pre-populate with real sessions from the main
+     * thread, then race init() against releases from worker threads.
+     */
     @Test
-    fun `thread safety - concurrent session creation`() {
-        // Start fresh
-        val initialSize = GeckoSessionManager.getAllSessions().size
-        
-        val threads = List(10) { index ->
+    fun `init + releaseSession must not throw ConcurrentModificationException`() {
+        GeckoSessionManager.init(context)
+
+        // Pre-populate from the main thread (only place GeckoSession() is safe).
+        val keys = (0 until 200).map { "concurrent-$it" }
+        keys.forEach { GeckoSessionManager.getOrCreateSession(it) }
+
+        val errors = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+        val initHammerThreads = List(10) {
             Thread {
-                repeat(10) {
-                    GeckoSessionManager.getOrCreateSession("concurrent-$index")
-                }
+                try {
+                    repeat(100) { GeckoSessionManager.init(context) }
+                } catch (t: Throwable) { errors.add(t) }
             }
         }
-        
-        threads.forEach { it.start() }
-        threads.forEach { it.join() }
-        
-        // Should have created exactly 10 new sessions (concurrent-0 through concurrent-9)
-        val sessions = GeckoSessionManager.getAllSessions()
-        val concurrentSessions = sessions.keys.filter { it.startsWith("concurrent-") }
-        assertEquals("Should have created 10 unique concurrent sessions", 10, concurrentSessions.size)
-        
-        // Verify all expected keys exist
-        (0..9).forEach { index ->
-            assertTrue("Should contain concurrent-$index", sessions.containsKey("concurrent-$index"))
+        val releaseThreads = keys.chunked(20).map { chunk ->
+            Thread {
+                try {
+                    chunk.forEach { GeckoSessionManager.releaseSession(it) }
+                } catch (t: Throwable) { errors.add(t) }
+            }
         }
+
+        (initHammerThreads + releaseThreads).forEach { it.start() }
+        (initHammerThreads + releaseThreads).forEach { it.join() }
+
+        val cmeErrors = errors.filterIsInstance<java.util.ConcurrentModificationException>()
+        assertTrue(
+            "Concurrent init + releaseSession must not throw CME; got ${cmeErrors.size}: ${cmeErrors.firstOrNull()}",
+            cmeErrors.isEmpty(),
+        )
     }
-    */
+
+    /**
+     * Companion regression: the specific race where `init()` iterates while
+     * `getOrCreateSession` (on the main thread, since GeckoSession requires
+     * it) inserts a new key. We simulate the insertion side by poking the
+     * underlying ConcurrentHashMap through a separate thread that hammers
+     * `getAllSessions()` — this triggers the same forEach path without
+     * needing GeckoSession construction off the UI thread.
+     */
+    @Test
+    fun `init iteration is safe under concurrent readers`() {
+        GeckoSessionManager.init(context)
+        (0 until 100).forEach { GeckoSessionManager.getOrCreateSession("seed-$it") }
+
+        val errors = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+        val readers = List(10) {
+            Thread {
+                try {
+                    repeat(500) { GeckoSessionManager.getAllSessions() }
+                } catch (t: Throwable) { errors.add(t) }
+            }
+        }
+        val initter = Thread {
+            try {
+                repeat(200) { GeckoSessionManager.init(context) }
+            } catch (t: Throwable) { errors.add(t) }
+        }
+
+        (readers + initter).forEach { it.start() }
+        (readers + initter).forEach { it.join() }
+
+        assertTrue(
+            "init + getAllSessions concurrently must not throw; got ${errors.firstOrNull()}",
+            errors.none { it is java.util.ConcurrentModificationException },
+        )
+    }
 
     @Test
     fun `session pooling - reuses sessions correctly`() {
         GeckoSessionManager.init(context)
-        
+
         // Create sessions
         val session1a = GeckoSessionManager.getOrCreateSession("pool-1")
         val session2a = GeckoSessionManager.getOrCreateSession("pool-2")
-        
+
         // Reuse sessions
         val session1b = GeckoSessionManager.getOrCreateSession("pool-1")
         val session2b = GeckoSessionManager.getOrCreateSession("pool-2")
-        
+
         assertSame("Should reuse pool-1", session1a, session1b)
         assertSame("Should reuse pool-2", session2a, session2b)
+    }
+
+    // ========== view registry (synchronized WeakHashMap) ==========
+
+    @Test
+    fun `registerView then getView returns the registered view`() {
+        val session: GeckoSession = mockk(relaxed = true)
+        val view: org.mozilla.geckoview.GeckoView = mockk(relaxed = true)
+
+        GeckoSessionManager.registerView(session, view)
+
+        assertSame(view, GeckoSessionManager.getView(session))
+    }
+
+    @Test
+    fun `getView returns null for an unregistered session`() {
+        val session: GeckoSession = mockk(relaxed = true)
+        assertEquals(null, GeckoSessionManager.getView(session))
+    }
+
+    @Test
+    fun `getAllViews returns a snapshot containing every registered view`() {
+        val sessionA: GeckoSession = mockk(relaxed = true)
+        val sessionB: GeckoSession = mockk(relaxed = true)
+        val viewA: org.mozilla.geckoview.GeckoView = mockk(relaxed = true)
+        val viewB: org.mozilla.geckoview.GeckoView = mockk(relaxed = true)
+
+        GeckoSessionManager.registerView(sessionA, viewA)
+        GeckoSessionManager.registerView(sessionB, viewB)
+
+        val all = GeckoSessionManager.getAllViews()
+        assertTrue("snapshot must contain viewA", all.contains(viewA))
+        assertTrue("snapshot must contain viewB", all.contains(viewB))
+    }
+
+    @Test
+    fun `getAllViews returns a detached copy safe to iterate`() {
+        val session: GeckoSession = mockk(relaxed = true)
+        val view: org.mozilla.geckoview.GeckoView = mockk(relaxed = true)
+        GeckoSessionManager.registerView(session, view)
+
+        val snapshot = GeckoSessionManager.getAllViews()
+        // Mutating the registry after the snapshot must not affect the returned
+        // list (it's a copy taken under the map monitor). We assert by relative
+        // membership rather than absolute size, since `views` is process-wide
+        // shared state and other tests may have registered entries.
+        val session2: GeckoSession = mockk(relaxed = true)
+        val laterView: org.mozilla.geckoview.GeckoView = mockk(relaxed = true)
+        GeckoSessionManager.registerView(session2, laterView)
+
+        assertTrue("snapshot taken before the later register must include view", snapshot.contains(view))
+        assertFalse("frozen snapshot must NOT see the later registration", snapshot.contains(laterView))
+        // Keep strong refs so the WeakHashMap doesn't evict mid-assert.
+        assertSame(view, GeckoSessionManager.getView(session))
+    }
+
+    @Test
+    fun `registerView + getAllViews must not throw under concurrent access`() {
+        // getAllViews snapshots under the synchronized monitor while
+        // registerView mutates from worker threads — must never surface a
+        // ConcurrentModificationException from the underlying WeakHashMap.
+        val sessions = (0 until 200).map { mockk<GeckoSession>(relaxed = true) }
+        val views = sessions.map { mockk<org.mozilla.geckoview.GeckoView>(relaxed = true) }
+        val errors = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+
+        val writers = sessions.indices.chunked(20).map { idxChunk ->
+            Thread {
+                try {
+                    idxChunk.forEach { GeckoSessionManager.registerView(sessions[it], views[it]) }
+                } catch (t: Throwable) { errors.add(t) }
+            }
+        }
+        val readers = List(8) {
+            Thread {
+                try {
+                    repeat(500) { GeckoSessionManager.getAllViews() }
+                } catch (t: Throwable) { errors.add(t) }
+            }
+        }
+
+        (writers + readers).forEach { it.start() }
+        (writers + readers).forEach { it.join() }
+
+        assertTrue(
+            "concurrent registerView + getAllViews must not throw; got ${errors.firstOrNull()}",
+            errors.none { it is java.util.ConcurrentModificationException },
+        )
+        // Keep strong refs alive so the WeakHashMap doesn't GC them mid-assert.
+        assertEquals(200, sessions.size)
+    }
+
+    // ========== getSessionKey reverse lookup ==========
+
+    @Test
+    fun `getSessionKey returns the key for a known session`() {
+        GeckoSessionManager.init(context)
+        val session = GeckoSessionManager.getOrCreateSession("reverse-lookup")
+
+        assertEquals("reverse-lookup", GeckoSessionManager.getSessionKey(session))
+    }
+
+    @Test
+    fun `getSessionKey returns null for an unknown session`() {
+        val stranger: GeckoSession = mockk(relaxed = true)
+        assertEquals(null, GeckoSessionManager.getSessionKey(stranger))
     }
 }

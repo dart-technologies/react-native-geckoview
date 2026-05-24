@@ -7,16 +7,14 @@ import '../setup';
 
 import React from 'react';
 import renderer, { ReactTestInstance } from 'react-test-renderer';
-import { clearFabricGlobals, fixtures } from './testUtils';
+import { fixtures } from './testUtils';
 
 // Use shared mock setup - reduces 30 lines of duplication
-jest.mock('react-native', () => require('./testUtils').setupReactNativeMock());
 
 import GeckoView from 'react-native-geckoview';
 
 describe('GeckoView Popup', () => {
     beforeEach(() => {
-        clearFabricGlobals();
         jest.clearAllMocks();
     });
 

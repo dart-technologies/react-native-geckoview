@@ -310,14 +310,7 @@ export default function App(): React.JSX.Element {
     // Error state
     const [error, setError] = useState<string | null>(null);
 
-    // Initial load effect
-    useEffect(() => {
-        // Load the default homepage after a short delay to ensure GeckoView is ready
-        const timer = setTimeout(() => {
-            geckoRef.current?.loadUrl('https://dart.art');
-        }, 500);
-        return () => clearTimeout(timer);
-    }, []);
+    // (Initial load handled by the single useEffect below that calls loadUrlOrSearch(inputUrl).)
 
     // ========================================================================
     // Theme Hook Application
@@ -528,12 +521,12 @@ export default function App(): React.JSX.Element {
 
     const submitAuth = useCallback(() => {
         if (authData) {
-            geckoRef.current?.resolvePrompt(authData.promptId, true, undefined, username);
+            geckoRef.current?.resolvePrompt(authData.promptId, true, undefined, username, password);
             setAuthData(null);
             setUsername('');
             setPassword('');
         }
-    }, [authData, username]);
+    }, [authData, username, password]);
 
     // ========================================================================
     // Initial Load

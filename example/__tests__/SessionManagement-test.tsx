@@ -14,7 +14,7 @@ import React, { useRef, useState } from 'react';
 import { render, waitFor, act, RenderResult } from '@testing-library/react-native';
 import { NativeModules } from 'react-native';
 import GeckoView, { GeckoViewRef } from 'react-native-geckoview';
-import { clearFabricGlobals, fixtures, GeckoViewModuleMock } from './testUtils';
+import { fixtures, GeckoViewModuleMock } from './testUtils';
 
 // Mock Fabric detection to force legacy mode
 jest.mock('../../src/fabricDetection', () => ({
@@ -23,11 +23,9 @@ jest.mock('../../src/fabricDetection', () => ({
 }));
 
 // Use shared mock setup
-jest.mock('react-native', () => require('./testUtils').setupReactNativeMock());
 
 describe('GeckoView Session Management E2E', () => {
     beforeEach(() => {
-        clearFabricGlobals();
         jest.clearAllMocks();
     });
 

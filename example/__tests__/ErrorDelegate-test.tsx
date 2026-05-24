@@ -15,14 +15,12 @@ import React from 'react';
 import { render, waitFor } from '@testing-library/react-native';
 import { NativeModules } from 'react-native';
 import GeckoView from 'react-native-geckoview';
-import { clearFabricGlobals, fixtures } from './testUtils';
+import { fixtures } from './testUtils';
 
 // Use shared mock setup
-jest.mock('react-native', () => require('./testUtils').setupReactNativeMock());
 
 describe('Error Delegate Tests', () => {
     beforeEach(() => {
-        clearFabricGlobals();
         jest.clearAllMocks();
     });
 

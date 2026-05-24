@@ -14,16 +14,14 @@ import '../setup';
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { NativeModules } from 'react-native';
-import { clearFabricGlobals, fixtures } from './testUtils';
+import { fixtures } from './testUtils';
 
 // Use shared mock setup
-jest.mock('react-native', () => require('./testUtils').setupReactNativeMock());
 
 import GeckoView, { GeckoViewRef } from 'react-native-geckoview';
 
 describe('JavaScript Execution Tests', () => {
     beforeEach(() => {
-        clearFabricGlobals();
         jest.clearAllMocks();
     });
 

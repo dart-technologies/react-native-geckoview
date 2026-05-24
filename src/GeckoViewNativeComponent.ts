@@ -7,6 +7,7 @@ interface NativeProps extends ViewProps {
     handleAudioFocus?: boolean;
     contentBlockingEnabled?: boolean;
     cookieBannerMode?: CodegenTypes.WithDefault<'reject' | 'accept' | 'none', 'reject'>;
+    desktopMode?: CodegenTypes.WithDefault<boolean, true>;
 
     // Event handlers matching types.ts
     onGeckoPageStart?: CodegenTypes.DirectEventHandler<{

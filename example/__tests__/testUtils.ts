@@ -1,33 +1,21 @@
 /**
  * Shared test utilities for GeckoView tests
- * Provides common mocks, helpers, and fixtures
+ * Provides the native module mock, fixtures, and small helpers.
+ *
+ * The `setupReactNativeMock()` factory is wired up globally via
+ * `example/setup.ts` + Jest `setupFiles`, so individual test files only need
+ * to `import GeckoView from 'react-native-geckoview'` and go. See
+ * `docs/TESTING.md` for the pattern.
  */
-
-import type { NativeModules as NativeModulesType } from 'react-native';
-
-// Extend global type for test mocking
-declare const global: {
-    nativeFabricUIManager?: {
-        getViewManagerConfig?: (name: string) => unknown;
-    };
-    __nativeComponentRegistry?: {
-        get: (name: string) => unknown;
-    };
-    __fabricUIManagerBinding?: unknown;
-    __getFabricUIManager?: () => unknown;
-    __globalObjectProxy?: {
-        nativeFabricUIManager?: {
-            getViewManagerConfig?: (name: string) => unknown;
-        };
-    };
-};
 
 // Type for the GeckoViewModule mock
 export interface GeckoViewModuleMock {
     reload: jest.Mock;
+    configureSecurity: jest.Mock;
     goBack: jest.Mock;
     goForward: jest.Mock;
     stop: jest.Mock;
+    closeSession: jest.Mock;
     shutdown: jest.Mock;
     installWebExtension: jest.Mock;
     sendWebExtensionMessage: jest.Mock;
@@ -36,115 +24,50 @@ export interface GeckoViewModuleMock {
     resolvePermission: jest.Mock;
     setEnhancedTrackingProtectionLevel: jest.Mock;
     setCookieBannerMode: jest.Mock;
-    setCookieBannerGlobalRules: jest.Mock;
     captureSnapshot: jest.Mock;
     loadUrl: jest.Mock;
     setUserAgent: jest.Mock;
 }
 
 /**
- * Creates a complete GeckoViewModule mock with all methods
- * Use this for custom mock configurations
+ * Creates a complete GeckoViewModule mock with all methods stubbed.
+ * Promise-returning methods resolve with placeholder values so callers can
+ * assert `toBeInstanceOf(Promise)` and chain `.then(...)` in tests.
  */
 export const createGeckoViewModuleMock = (): GeckoViewModuleMock => ({
     reload: jest.fn(),
+    configureSecurity: jest.fn().mockResolvedValue(undefined),
     goBack: jest.fn(),
     goForward: jest.fn(),
     stop: jest.fn(),
+    closeSession: jest.fn(),
     shutdown: jest.fn(),
-    installWebExtension: jest.fn(),
-    sendWebExtensionMessage: jest.fn(),
+    installWebExtension: jest.fn().mockResolvedValue(undefined),
+    sendWebExtensionMessage: jest.fn().mockResolvedValue(undefined),
     evaluateJavaScript: jest.fn().mockResolvedValue('result'),
     resolvePrompt: jest.fn(),
     resolvePermission: jest.fn(),
-    setEnhancedTrackingProtectionLevel: jest.fn(),
-    setCookieBannerMode: jest.fn(),
-    setCookieBannerGlobalRules: jest.fn(),
-    captureSnapshot: jest.fn(),
+    setEnhancedTrackingProtectionLevel: jest.fn().mockResolvedValue(undefined),
+    setCookieBannerMode: jest.fn().mockResolvedValue(undefined),
+    captureSnapshot: jest.fn().mockResolvedValue('/tmp/snapshot.png'),
     loadUrl: jest.fn(),
     setUserAgent: jest.fn(),
 });
 
 /**
- * Setup standard React Native mock for GeckoView tests.
- * Use this for one-line mock setup in test files:
- * 
- * @example
- * jest.mock('react-native', () => require('./testUtils').setupReactNativeMock());
+ * Setup the shared React Native mock. Invoked once by `example/setup.ts`
+ * via Jest's `setupFiles`. Test files should not call this directly.
  */
 export const setupReactNativeMock = (): typeof import('react-native') => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const RN = jest.requireActual('react-native');
     RN.NativeModules.GeckoViewModule = createGeckoViewModuleMock();
-    const mockRequireNativeComponent = jest.fn(() => 'NativeGeckoView');
+    const stubComponent = jest.fn(() => 'NativeGeckoView');
     Object.defineProperty(RN, 'requireNativeComponent', {
-        get: () => mockRequireNativeComponent,
+        get: () => stubComponent,
         configurable: true,
     });
     return RN;
-};
-
-/**
- * Clears all Fabric-related globals
- * Use in beforeEach/afterEach to ensure clean test environment
- */
-export const clearFabricGlobals = (): void => {
-    delete global.__nativeComponentRegistry;
-    delete global.nativeFabricUIManager;
-    delete global.__fabricUIManagerBinding;
-    delete global.__getFabricUIManager;
-    delete global.__globalObjectProxy;
-};
-
-/**
- * Sets up a mock Fabric registry with a component
- * @param componentName - Name of the component to register
- * @param returnValue - Value to return when component is retrieved
- * @returns The mock get function
- */
-export const createMockFabricRegistry = (
-    componentName: string,
-    returnValue: unknown = {}
-): jest.Mock => {
-    const get = jest.fn((name: string) => (name === componentName ? returnValue : null));
-    global.__nativeComponentRegistry = { get };
-    return get;
-};
-
-/**
- * Sets up a mock Fabric UI Manager
- * @param componentName - Name of the component to register
- * @param config - Config to return for the component
- * @returns The mock getViewManagerConfig function
- */
-export const createMockFabricUIManager = (
-    componentName: string,
-    config: unknown = {}
-): jest.Mock => {
-    const getViewManagerConfig = jest.fn((name: string) =>
-        name === componentName ? config : null
-    );
-    global.nativeFabricUIManager = { getViewManagerConfig };
-    return getViewManagerConfig;
-};
-
-/**
- * Sets up a mock Hermes Fabric UI Manager (via __globalObjectProxy)
- * @param componentName - Name of the component to register
- * @param config - Config to return for the component
- * @returns The mock getViewManagerConfig function
- */
-export const createMockHermesFabricUIManager = (
-    componentName: string,
-    config: unknown = {}
-): jest.Mock => {
-    const getViewManagerConfig = jest.fn((name: string) =>
-        name === componentName ? config : null
-    );
-    global.__globalObjectProxy = {
-        nativeFabricUIManager: { getViewManagerConfig },
-    };
-    return getViewManagerConfig;
 };
 
 /**
@@ -193,10 +116,7 @@ export const fixtures: TestFixtures = {
 };
 
 /**
- * Waits for a condition with timeout
- * @param condition - Function that returns true when condition is met
- * @param timeout - Timeout in ms (default: 1000)
- * @param interval - Check interval in ms (default: 50)
+ * Waits for a condition with timeout.
  */
 export const waitForCondition = async (
     condition: () => boolean,
@@ -214,8 +134,7 @@ export const waitForCondition = async (
 
 /**
  * Suppresses console warnings during test execution
- * Useful for tests that intentionally trigger warnings
- * @param testFn - Test function to run with suppressed warnings
+ * Useful for tests that intentionally trigger warnings.
  */
 export const suppressConsoleWarnings = async (
     testFn: () => Promise<void>

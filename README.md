@@ -4,29 +4,28 @@ A React Native wrapper for Mozilla's [GeckoView](https://github.com/mozilla/geck
 
 ## Version Information
 
-**GeckoView Version**: 143.0.20250908174027  
+**GeckoView Version**: 150.0.20260415192539
 - [GeckoView JavaDoc](https://mozilla.github.io/geckoview/javadoc/mozilla-central/org/mozilla/geckoview/package-summary.html)
 - [GeckoView Changelog](https://mozilla.github.io/geckoview/javadoc/mozilla-central/org/mozilla/geckoview/doc-files/CHANGELOG)
 - [Mozilla Maven Repository](https://maven.mozilla.org/maven2/)
 
 **Build Requirements**:
-- Gradle: 8.9.1
-- Android NDK: 27.0.12077973
-- Android compileSdkVersion: 28+ (recommended: 34+)
-- Android minSdkVersion: 16+ (GeckoView requires 21+)
+- React Native: **0.83+** (Expo SDK 55-aligned)
+- Gradle: 9.1.0
+- Android Gradle Plugin: 8.12.0
+- Kotlin: 2.2.20
+- Android compileSdkVersion: 36
+- Android minSdkVersion: 24 (required by RN 0.83; GeckoView needs 21+)
 
-## New Architecture (Fabric) Status
+## New Architecture (Fabric) Only
 
-- ✅ Supported on React Native **0.81+**.  
-  When `newArchEnabled=true`, the `com.facebook.react` Gradle plugin runs codegen, builds `libreact_codegen_geckoviewspec.so`, and registers the GeckoView ComponentDescriptor automatically.
-- 🔁 If the consuming app keeps `newArchEnabled=false`, the library transparently falls back to the Paper renderer (no crashes or manual configuration required).
+This library targets React Native 0.83+, which is **New-Architecture-only**.
+The `com.facebook.react` Gradle plugin runs codegen unconditionally, builds
+`libreact_codegen_geckoviewspec.so`, and registers the GeckoView
+ComponentDescriptor automatically. No `newArchEnabled` flag needed.
 
-### Enabling Fabric
-
-1. In your app’s `android/gradle.properties` set `newArchEnabled=true`.
-2. Clean & rebuild (`./gradlew app:installDebug` or `yarn android`).
-3. Verify the metro logs mention `Fabric` and GeckoView renders normally.  
-   If Fabric fails to initialize, the JS component prints a warning and falls back to Paper.
+Consumers on React Native 0.81 / 0.82 should pin
+`react-native-geckoview@^0.1.0`, which retained Paper support.
 
 ## Installation
 
@@ -49,7 +48,7 @@ allprojects {
 
 ## Features
 
-- ✅ Latest GeckoView 143 with modern web platform support
+- ✅ GeckoView 150 with modern web platform support
 - ✅ Media playback with audio focus management
 - ✅ Page load progress events and security monitoring
 - ✅ Enhanced Tracking Protection (ETP)
@@ -60,6 +59,8 @@ allprojects {
 - ✅ Session persistence and management
 - ✅ Web extension support
 - ✅ Navigation error handling
+- ✅ Security-by-default: URL scheme allowlist, intent-URI sanitization,
+  signed-extension-update gate, sandboxed content process in release
 
 ## Basic Usage
 
@@ -91,8 +92,9 @@ function MyBrowser() {
 | `source` | `{ uri: string }` | required | URL to load |
 | `sessionKey` | `string` | `undefined` | Unique session identifier for persistence across remounts |
 | `handleAudioFocus` | `boolean` | `false` | Automatically manage Android audio focus for media playback |
-| `contentBlockingEnabled` | `boolean` | `true` | Enable content blocking features |
-| `cookieBannerMode` | `'reject'` \| `'accept'` \| `'none'` | `'none'` | Cookie banner handling mode |
+| `contentBlockingEnabled` | `boolean` | `undefined` | Enable content blocking features (Gecko's built-in tracking protection) |
+| `cookieBannerMode` | `'reject'` \| `'accept'` \| `'none'` | `'reject'` | Cookie banner handling mode |
+| `desktopMode` | `boolean` | `true` | Use a desktop user-agent and viewport instead of mobile |
 
 #### Progress Events
 
@@ -138,13 +140,10 @@ Actions: `'play'`, `'pause'`, `'stop'`, `'activated'`, `'deactivated'`, `'metada
 
 | Event | Payload | Description |
 |-------|---------|-------------|
-| `onWebExtensionMessage` | `{ message }` | Message from web extension |
-| `onTitleChange` | `title: string` | Page title changed |
-| `onFaviconChange` | `uri: string` | Page favicon changed |
-| `onContextMenu` | `items, x, y` | Context menu requested |
-| `onFocusExit` | `direction: 'up'|'down'|'left'|'right'` | Focus exited view (TV/AAOS) |
-| `onFullscreenRequest` | `enabled: boolean` | Fullscreen mode requested |
-| `onPictureInPicture` | `enabled: boolean` | Picture-in-picture mode requested |
+| `onWebExtensionMessage` | `{ message: { extensionId?, ... } }` | Message from web extension |
+| `onTitleChange` | `{ title: string }` | Page title changed |
+| `onContextMenu` | `{ x, y, linkUri?, srcUri?, type }` | Context menu requested |
+| `onFocusExit` | `{ direction: 'up'\|'down'\|'left'\|'right' }` | Focus exited view (D-pad / TV / AAOS) |
 
 ### Imperative Methods
 
@@ -159,22 +158,39 @@ geckoRef.current?.goBack();
 geckoRef.current?.goForward();
 geckoRef.current?.stop();
 
-// JavaScript Execution
-const result = await geckoRef.current?.evaluateJavaScript('document.title');
+// Load a URL. Only http/https/about schemes are accepted; javascript:,
+// data:, file:, content:, and blob: are silently dropped to prevent XSS
+// via host-app forwarding of user-controlled URLs.
+geckoRef.current?.loadUrl('https://example.com');
 
-// Prompt Resolution
-geckoRef.current?.resolvePrompt(promptId, true, 'text input');
+// JavaScript Execution. evaluateJavaScript uses the trusted internal
+// WebExtension bridge. Code runs in the bridge content-script context
+// with DOM access, and rejects with EVAL_BRIDGE_UNAVAILABLE until that
+// bridge is connected for the session. The return type is generic:
+// annotate it to avoid a cast at the call site.
+const title = await geckoRef.current?.evaluateJavaScript<string>('document.title');
+
+// Prompt Resolution. Signature:
+//   resolvePrompt(promptId, confirm, text?, username?, password?)
+geckoRef.current?.resolvePrompt(promptId, true, 'text input');     // text prompt
+geckoRef.current?.resolvePrompt(promptId, true, undefined, user, pass); // HTTP auth
 
 // Permission Handling
 geckoRef.current?.resolvePermission(requestId, true);
 
-// Privacy Controls
-geckoRef.current?.setEnhancedTrackingProtectionLevel(2); // 0=NONE, 1=DEFAULT, 2=STRICT
-geckoRef.current?.setCookieBannerMode(1); // 0=DISABLED, 1=REJECT, 2=REJECT_OR_ACCEPT
+// Privacy Controls. Both return Promise<void> and reject with
+// INVALID_ETP_LEVEL / INVALID_COOKIE_BANNER_MODE on out-of-range input.
+await geckoRef.current?.setEnhancedTrackingProtectionLevel(2); // 0=NONE, 1=DEFAULT, 2=STRICT
+await geckoRef.current?.setCookieBannerMode(1);                // 0=DISABLED, 1=REJECT, 2=REJECT_OR_ACCEPT
 
-// Web Extensions
-geckoRef.current?.installWebExtension('asset://extensions/my-extension');
-geckoRef.current?.sendWebExtensionMessage(JSON.stringify({ action: 'doSomething' }));
+// Web Extensions. Path is validated: ../, %2e%2e, null bytes, backslashes,
+// and absolute paths are rejected. Update prompts that request new
+// permissions or origins are denied automatically.
+await geckoRef.current?.installWebExtension('my-extension');  // resolves relative to assets/
+await geckoRef.current?.sendWebExtensionMessage(
+  'my-extension@example.com',
+  JSON.stringify({ action: 'doSomething' })
+);
 
 // Lifecycle
 geckoRef.current?.shutdown();
@@ -271,70 +287,38 @@ function RobustBrowser() {
 
 ### Prompt Handling
 
+The library never shows native dialogs for `alert()`/`confirm()`/`prompt()`,
+popups, or HTTP auth — you render the UI and resolve via `resolvePrompt`:
+
 ```javascript
-function InteractiveBrowser() {
-  const geckoRef = useRef(null);
-  const [promptId, setPromptId] = useState(null);
-  const [authPrompt, setAuthPrompt] = useState(null);
+// Popup / confirm: resolvePrompt(promptId, confirm)
+geckoRef.current?.resolvePrompt(promptId, true);
 
-  const handlePopup = (event) => {
-    const { promptId, targetUri } = event.nativeEvent;
-    Alert.alert(
-      'Popup Blocked',
-      `Allow popup to ${targetUri}?`,
-      [
-        {
-          text: 'Block',
-          onPress: () => geckoRef.current?.resolvePrompt(promptId, false)
-        },
-        {
-          text: 'Allow',
-          onPress: () => geckoRef.current?.resolvePrompt(promptId, true)
-        }
-      ]
-    );
-  };
-
-  const handleAuth = (event) => {
-    const { promptId, message } = event.nativeEvent;
-    setAuthPrompt({ promptId, message });
-    // Show custom auth dialog
-  };
-
-  const submitAuth = (username, password) => {
-    geckoRef.current?.resolvePrompt(
-      authPrompt.promptId,
-      true,
-      null,
-      { username, password }
-    );
-    setAuthPrompt(null);
-  };
-
-  return (
-    <GeckoView
-      ref={geckoRef}
-      source={{ uri: 'https://example.com' }}
-      onGeckoPopup={handlePopup}
-      onGeckoAuth={handleAuth}
-      style={{ flex: 1 }}
-    />
-  );
-}
+// HTTP auth: resolvePrompt(promptId, confirm, text?, username?, password?)
+geckoRef.current?.resolvePrompt(promptId, true, undefined, username, password);
 ```
 
+See [docs/ADVANCED.md](docs/ADVANCED.md#2-custom-prompt-handling) for full
+alert/confirm/prompt and HTTP-auth handling patterns.
+
 ### Enhanced Tracking Protection
+
+Both privacy setters return `Promise<void>` and reject on invalid input;
+handle rejections so configuration errors don't fail silently.
 
 ```javascript
 function PrivacyBrowser() {
   const geckoRef = useRef(null);
 
   useEffect(() => {
-    // Set strict tracking protection
-    geckoRef.current?.setEnhancedTrackingProtectionLevel(2);
-    
-    // Auto-reject cookie banners
-    geckoRef.current?.setCookieBannerMode(1);
+    (async () => {
+      try {
+        await geckoRef.current?.setEnhancedTrackingProtectionLevel(2); // strict
+        await geckoRef.current?.setCookieBannerMode(1);                // reject
+      } catch (e) {
+        console.warn('Privacy config failed:', e);
+      }
+    })();
   }, []);
 
   return (
@@ -415,21 +399,57 @@ const MyComponent: React.FC = () => {
 };
 ```
 
+## Security
+
+See the [CHANGELOG `[Unreleased]` entry](CHANGELOG.md#unreleased) for the
+security-audit baseline. Quick summary of what the library enforces:
+
+| Surface | Enforcement |
+|---|---|
+| `loadUrl` / `setSource` / popup URIs | Scheme allowlist: `http`, `https`, `about` only |
+| `onLoadRequest` (top-frame + subframe) | `javascript:`, `data:`, `file:`, `content:`, `blob:` denied |
+| `intent://` handling | Selector/component cleared, grant-URI flags masked, `BROWSABLE` required, dangerous data schemes rejected |
+| `installWebExtension` | Path validated against `../`, `%2e`, `\`, null bytes, absolute paths |
+| Extension update prompts | Installed delegate denies new permissions/origins + unlisted IDs |
+| Content-process sandbox | Enabled in all builds; sandbox-disable flags are never set |
+| Autoplay / DRM | Blocked unless `configureGeckoViewSecurity(...)` opts in before first mount |
+| Page console output | Off by default; optional in debug builds via `configureGeckoViewSecurity(...)` |
+
+Security-sensitive runtime options are opt-in via `configureGeckoViewSecurity(options)`,
+which must be called before the first `GeckoView` mount:
+
+| `GeckoSecurityOptions` | Type | Default | Description |
+|---|---|---|---|
+| `allowDrm` | `boolean` | `false` | Allow Encrypted Media Extensions / DRM key-system access |
+| `allowAutoplay` | `boolean` | `false` | Allow audible/inaudible autoplay without prompting |
+| `enableConsoleOutput` | `boolean` | `false` | Forward page console output to logcat (debug builds only) |
+| `cookieBehavior` | `number` | `4` (`ACCEPT_NON_TRACKERS`) | GeckoView `ContentBlocking.CookieBehavior` constant applied at runtime init |
+| `maxSnapshotPixels` | `number` | `16777216` (4096×4096) | Max `captureSnapshot` size before it rejects with `SNAPSHOT_TOO_LARGE` |
+
+Security-sensitive APIs are marked in the JSDoc of
+[src/types.ts](src/types.ts) and [index.tsx](index.tsx).
+
 ## Testing
 
-The library includes comprehensive test coverage (~78% overall):
-- **249 JavaScript tests** (~85% coverage) - Component, session, Fabric detection
-- **191 Kotlin unit tests** (~75% coverage) - All delegates and managers
-- **13 E2E tests** - Real device flows via Detox
+The library includes comprehensive test coverage across three layers:
+- **JavaScript (Jest)** - Component, session, and security surface
+- **Kotlin unit tests** - All delegates, managers, and security validators
+- **E2E (Detox)** - Real device flows
+
+See [docs/TESTING.md](docs/TESTING.md) for the current test counts and the
+full file-by-file breakdown.
 
 Run tests:
 ```bash
-cd example && npm test              # JavaScript
-cd example && npm run detox:test:android # E2E (requires emulator)
-cd example/android && ./gradlew :react-native-geckoview:testDebugUnitTest  # Kotlin
+cd example && yarn test                 # JavaScript
+cd example/android && ./gradlew :react-native-geckoview:testDebugUnitTest    # Kotlin (debug)
+cd example/android && ./gradlew :react-native-geckoview:testReleaseUnitTest  # Kotlin (release — security guards)
+cd example && yarn detox:test:android   # E2E (requires emulator)
 ```
 
-See [docs/TESTING.md](docs/TESTING.md) for details.
+The release-variant Kotlin pass enforces the runtime-config regression
+guards (sandbox flags absent, signature verification enabled, autoplay
+default blocked) — run both variants before shipping.
 
 ## Advanced Usage
 

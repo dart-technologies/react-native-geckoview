@@ -15,14 +15,12 @@ import React, { useState, useEffect, ReactElement } from 'react';
 import { render, waitFor, act, RenderResult } from '@testing-library/react-native';
 import { NativeModules } from 'react-native';
 import GeckoView from 'react-native-geckoview';
-import { clearFabricGlobals, GeckoViewModuleMock } from './testUtils';
+import { GeckoViewModuleMock } from './testUtils';
 
 // Use shared mock setup
-jest.mock('react-native', () => require('./testUtils').setupReactNativeMock());
 
 describe('Memory Leak Tests', () => {
     beforeEach(() => {
-        clearFabricGlobals();
         jest.clearAllMocks();
     });
 

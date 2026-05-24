@@ -1,41 +1,77 @@
 package com.reactnative.geckoview
 
-import android.util.Log
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.facebook.react.uimanager.UIManagerHelper
 import com.facebook.react.uimanager.events.Event
+import java.util.Collections
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 
 /**
  * Generic view-level event for GeckoView. Wraps an event name + payload so a
  * single class can carry every `onGeckoXxx` → `topGeckoXxx` dispatch. Uses the
- * `Event(viewTag)` constructor (surfaceId defaults to -1); the EventDispatcher
- * resolves the surfaceId from the viewTag for both Fabric and legacy renderers.
+ * explicit `Event(surfaceId, viewTag)` constructor required by RN 0.83+; the
+ * EventDispatcher resolves surfaceId from the viewTag when callers pass -1.
  */
 private class GeckoGenericEvent(
+    surfaceId: Int,
     viewTag: Int,
     private val nativeEventName: String,
     private val params: WritableMap?,
-) : Event<GeckoGenericEvent>(viewTag) {
+) : Event<GeckoGenericEvent>(surfaceId, viewTag) {
     override fun getEventName(): String = nativeEventName
     override fun getEventData(): WritableMap? = params
 }
 
 class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
-    private val pendingPrompts = mutableMapOf<String, PromptInfo>()
-    private val pendingPermissions = mutableMapOf<String, GeckoResult<Int>>()
-    
-    data class PromptInfo(val prompt: Any, val result: GeckoResult<Any>)
+    private val pendingPrompts: MutableMap<String, PromptInfo> =
+        Collections.synchronizedMap(mutableMapOf())
+    private val pendingPermissions: MutableMap<String, GeckoResult<Int>> =
+        Collections.synchronizedMap(mutableMapOf())
+    private val timeoutHandler = Handler(Looper.getMainLooper())
+    private val timeoutRunnables: MutableMap<String, Runnable> =
+        Collections.synchronizedMap(mutableMapOf())
+    // Snapshots are tracked per-session so closeSession only removes its own
+    // captures. A flat Set previously caused closeSession to wipe every
+    // session's snapshots whenever any one was closed.
+    private val snapshotsBySession: MutableMap<String, MutableSet<java.io.File>> = mutableMapOf()
+    private val snapshotsLock = Any()
+
+    data class PromptInfo(val prompt: Any, val result: GeckoResult<Any>, val createdAt: Long = System.currentTimeMillis())
 
     init {
-        // Ensure GeckoSessionManager has a Context even if sessions are created via module methods
-        // before a GeckoView instance is mounted.
         GeckoSessionManager.init(reactContext.applicationContext)
     }
 
     override fun getName() = "GeckoViewModule"
+
+    @ReactMethod
+    fun configureSecurity(options: ReadableMap, promise: Promise) {
+        val configured = GeckoRuntimeManager.configureSecurity(
+            GeckoSecurityConfig.Options(
+                allowDrm = options.getBooleanOrDefault("allowDrm", false),
+                allowAutoplay = options.getBooleanOrDefault("allowAutoplay", false),
+                enableConsoleOutput = options.getBooleanOrDefault("enableConsoleOutput", false),
+                cookieBehavior = options.getIntOrDefault(
+                    "cookieBehavior",
+                    org.mozilla.geckoview.ContentBlocking.CookieBehavior.ACCEPT_NON_TRACKERS
+                ),
+                maxSnapshotPixels = options.getLongOrDefault("maxSnapshotPixels", 4096L * 4096L),
+            )
+        )
+        if (configured) {
+            promise.resolve(null)
+        } else {
+            promise.reject(
+                "GECKO_RUNTIME_ALREADY_INITIALIZED",
+                "configureGeckoViewSecurity must be called before the first GeckoView is mounted"
+            )
+        }
+    }
 
     @ReactMethod
     fun reload(sessionKey: String) {
@@ -59,13 +95,9 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     @ReactMethod
     fun closeSession(sessionKey: String) {
-        // GeckoSession.close() asserts on the UI thread (ThreadUtils.assertOnUiThread).
-        // @ReactMethod calls run on the native modules queue (`mqt_v_native`), so
-        // calling through unguarded throws IllegalThreadStateException — which the
-        // bridgeless runtime treats as a fatal host exception and destroys the
-        // ReactHost, leaving the user on a white screen after back navigation.
         UiThreadUtil.runOnUiThread {
             GeckoSessionManager.releaseSession(sessionKey)
+            cleanupSnapshotsForSession(sessionKey)
         }
     }
 
@@ -76,6 +108,10 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     @ReactMethod
     fun loadUrl(sessionKey: String, url: String) {
+        if (!isSafeLoadUrl(url)) {
+            GeckoLog.d(TAG, "Rejecting loadUrl with disallowed scheme")
+            return
+        }
         GeckoSessionManager.getOrCreateSession(sessionKey).loadUri(url)
     }
 
@@ -92,7 +128,8 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
     }
 
     @ReactMethod
-    fun resolvePrompt(promptId: String, confirm: Boolean, text: String?, username: String?) {
+    fun resolvePrompt(promptId: String, confirm: Boolean, text: String?, username: String?, password: String?) {
+        cancelTimeout(promptId)
         pendingPrompts.remove(promptId)?.let { pending ->
             try {
                 val response = when (val prompt = pending.prompt) {
@@ -125,8 +162,11 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                         prompt.confirm(confirm)
                     }
                     is AuthPromptWrapper -> {
-                        if (confirm && username != null && text != null) {
-                            prompt.confirm(username, text)
+                        // `password` is the explicit channel; fall back to `text`
+                        // for older callers that passed the password positionally.
+                        val pw = password ?: text
+                        if (confirm && username != null && pw != null) {
+                            prompt.confirm(username, pw)
                         } else {
                             prompt.dismiss()
                         }
@@ -135,17 +175,18 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                 }
                 response?.let { pending.result.complete(it) }
             } catch (e: Exception) {
-                Log.e(TAG, "Error resolving prompt", e)
+                GeckoLog.e(TAG, "Error resolving prompt", e)
             }
         }
     }
 
     @ReactMethod
     fun resolvePermission(requestId: String, allow: Boolean) {
+        cancelTimeout(requestId)
         pendingPermissions.remove(requestId)?.let { result ->
-            result.complete(if (allow) 
-                org.mozilla.geckoview.GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW 
-            else 
+            result.complete(if (allow)
+                org.mozilla.geckoview.GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+            else
                 org.mozilla.geckoview.GeckoSession.PermissionDelegate.ContentPermission.VALUE_DENY
             )
         }
@@ -154,7 +195,6 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
     @ReactMethod
     fun installWebExtension(assetPath: String, promise: Promise) {
         try {
-            // Ensure runtime/controller exist even if a session hasn't been opened yet.
             GeckoRuntimeManager.getRuntime(reactApplicationContext)
             val controller = GeckoRuntimeManager.getWebExtensionController()
             if (controller == null) {
@@ -165,6 +205,11 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             controller.installExtension(assetPath) { success, error ->
                 if (success) {
                     promise.resolve(null)
+                } else if (error is IllegalArgumentException) {
+                    promise.reject(
+                        "INVALID_ASSET_PATH",
+                        error.message ?: "Invalid extension asset path"
+                    )
                 } else {
                     promise.reject(
                         "WEB_EXTENSION_INSTALL",
@@ -178,23 +223,55 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
     }
 
     @ReactMethod
-    fun sendWebExtensionMessage(message: String) {
-        GeckoRuntimeManager.getWebExtensionController()?.sendMessage(message)
-    }
-
-    @ReactMethod
-    fun setEnhancedTrackingProtectionLevel(level: Int) {
-        val runtime = GeckoRuntimeManager.getRuntime()
-        runtime?.let {
-            ContentBlockingController(it).setEnhancedTrackingProtectionLevel(level)
+    fun sendWebExtensionMessage(
+        sessionKey: String,
+        extensionId: String,
+        message: String,
+        promise: Promise
+    ) {
+        val sent = GeckoRuntimeManager.getWebExtensionController()
+            ?.sendMessage(sessionKey, extensionId, message) ?: false
+        if (sent) {
+            promise.resolve(null)
+        } else {
+            promise.reject(
+                "WEB_EXTENSION_PORT_UNAVAILABLE",
+                "No connected WebExtension port for the requested extension and session"
+            )
         }
     }
 
     @ReactMethod
-    fun setCookieBannerMode(mode: Int) {
-        val runtime = GeckoRuntimeManager.getRuntime()
-        runtime?.let {
-            ContentBlockingController(it).setCookieBannerMode(mode)
+    fun setEnhancedTrackingProtectionLevel(level: Int, promise: Promise) {
+        try {
+            val runtime = GeckoRuntimeManager.getRuntime()
+            if (runtime == null) {
+                promise.reject("GECKO_RUNTIME", "GeckoRuntime is not initialized")
+                return
+            }
+            ContentBlockingController(runtime).setEnhancedTrackingProtectionLevel(level)
+            promise.resolve(null)
+        } catch (e: IllegalArgumentException) {
+            promise.reject("INVALID_ETP_LEVEL", e.message ?: "Invalid ETP level")
+        } catch (e: Throwable) {
+            promise.reject("ETP_SET_FAILED", e.message ?: "Failed to set ETP level")
+        }
+    }
+
+    @ReactMethod
+    fun setCookieBannerMode(mode: Int, promise: Promise) {
+        try {
+            val runtime = GeckoRuntimeManager.getRuntime()
+            if (runtime == null) {
+                promise.reject("GECKO_RUNTIME", "GeckoRuntime is not initialized")
+                return
+            }
+            ContentBlockingController(runtime).setCookieBannerMode(mode)
+            promise.resolve(null)
+        } catch (e: IllegalArgumentException) {
+            promise.reject("INVALID_COOKIE_BANNER_MODE", e.message ?: "Invalid cookie banner mode")
+        } catch (e: Throwable) {
+            promise.reject("COOKIE_BANNER_SET_FAILED", e.message ?: "Failed to set cookie banner mode")
         }
     }
 
@@ -202,103 +279,266 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
     fun captureSnapshot(sessionKey: String, promise: Promise) {
         val session = GeckoSessionManager.getOrCreateSession(sessionKey)
         val view = GeckoSessionManager.getView(session)
-        
+
         if (view == null) {
             promise.reject("VIEW_NOT_FOUND", "No GeckoView attached to session: $sessionKey")
             return
         }
 
-        view.capturePixels().then { bitmap ->
-            if (bitmap != null) {
-                try {
-                    val file = java.io.File.createTempFile("snapshot", ".png", reactApplicationContext.cacheDir)
-                    val stream = java.io.FileOutputStream(file)
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
-                    stream.close()
-                    promise.resolve(file.absolutePath)
-                } catch (e: Exception) {
-                    promise.reject("SNAPSHOT_ERROR", "Error saving snapshot: ${e.message}")
-                }
-            } else {
-                promise.reject("SNAPSHOT_ERROR", "Failed to capture snapshot: Bitmap is null")
-            }
-            GeckoResult.fromValue(null)
+        val maxPixels = GeckoSecurityConfig.current().maxSnapshotPixels
+        val viewPixels = view.width.toLong() * view.height.toLong()
+        if (viewPixels > maxPixels) {
+            promise.reject(
+                "SNAPSHOT_TOO_LARGE",
+                "View exceeds $maxPixels pixels (${view.width}x${view.height})"
+            )
+            return
         }
+
+        view.capturePixels().then(
+            { bitmap ->
+                if (bitmap == null) {
+                    promise.reject("SNAPSHOT_ERROR", "Failed to capture snapshot: Bitmap is null")
+                    return@then GeckoResult.fromValue(null)
+                }
+                // `try { ... } finally { recycle }` — every exit path (success,
+                // SNAPSHOT_TOO_LARGE rejection, file-save catch) must release
+                // the native bitmap pixels promptly rather than waiting for GC.
+                try {
+                    if (bitmap.width.toLong() * bitmap.height.toLong() > maxPixels) {
+                        promise.reject(
+                            "SNAPSHOT_TOO_LARGE",
+                            "Snapshot exceeds $maxPixels pixels (${bitmap.width}x${bitmap.height})"
+                        )
+                        return@then GeckoResult.fromValue(null)
+                    }
+                    try {
+                        // `noBackupFilesDir` keeps the PNG out of Android auto-backup,
+                        // so page screenshots don't sync to cloud even if the host app
+                        // enables `allowBackup`. `deleteOnExit` + TTL eviction limits
+                        // disk residency.
+                        val dir = java.io.File(reactApplicationContext.noBackupFilesDir, "geckoview_snapshots")
+                        dir.mkdirs()
+                        evictStaleSnapshots(dir)
+                        val file = java.io.File.createTempFile("snapshot", ".png", dir)
+                        file.deleteOnExit()
+                        java.io.FileOutputStream(file).use { stream ->
+                            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+                        }
+                        synchronized(snapshotsLock) {
+                            snapshotsBySession.getOrPut(sessionKey) { mutableSetOf() }.add(file)
+                        }
+                        promise.resolve(file.absolutePath)
+                    } catch (e: Exception) {
+                        promise.reject("SNAPSHOT_ERROR", "Error saving snapshot: ${e.message}")
+                    }
+                } finally {
+                    bitmap.recycle()
+                }
+                GeckoResult.fromValue(null)
+            },
+            // Without this exception listener the React promise hangs forever
+            // when capturePixels() completes with a Throwable.
+            GeckoResult.OnExceptionListener<GeckoResult<Void>?> { throwable ->
+                promise.reject(
+                    "SNAPSHOT_ERROR",
+                    throwable.message ?: "capturePixels failed",
+                    throwable,
+                )
+                GeckoResult.fromValue(null)
+            },
+        )
     }
 
     @ReactMethod
     fun evaluateJavaScript(sessionKey: String, code: String, promise: Promise) {
-        val session = GeckoSessionManager.getOrCreateSession(sessionKey)
-        val uuid = java.util.UUID.randomUUID().toString()
-        
-        // Wrapper to capture result and send back via alert
-        val wrappedCode = """
-            (function() {
-                try {
-                    var result = (function() { $code })();
-                    alert("__EVAL_RESULT__:$uuid:" + JSON.stringify(result));
-                } catch (e) {
-                    alert("__EVAL_ERROR__:$uuid:" + e.message);
-                }
-            })();
-        """.trimIndent()
-
-        // Store promise to resolve later when alert is intercepted
-        pendingPrompts[uuid] = PromptInfo(promise, GeckoResult())
-        
-        session.loadUri("javascript:$wrappedCode")
+        GeckoSessionManager.getOrCreateSession(sessionKey)
+        tryEvaluateJavaScript(sessionKey, code, promise, attempt = 0)
     }
 
-    internal fun resolveEval(uuid: String, result: String?, error: String?) {
-        pendingPrompts.remove(uuid)?.let { info ->
-            val promise = info.prompt as? Promise
-            if (promise != null) {
-                if (error != null) {
-                    promise.reject("EVAL_ERROR", error)
-                } else {
-                    promise.resolve(result)
+    private fun tryEvaluateJavaScript(sessionKey: String, code: String, promise: Promise, attempt: Int) {
+        val controller = GeckoRuntimeManager.getWebExtensionController()
+        // Returns true once the eval request is queued (port present); the
+        // bridge's own pendingEval then settles `promise`. A false return means
+        // no port yet for this session.
+        if (controller != null && controller.evaluateJavaScript(sessionKey, code, promise)) {
+            return
+        }
+        if (attempt >= EVAL_BRIDGE_MAX_RETRIES) {
+            promise.reject(
+                "EVAL_BRIDGE_UNAVAILABLE",
+                "Trusted GeckoView eval bridge is not connected for this session"
+            )
+            return
+        }
+        // The bridge content script connects at document_idle; on a fresh
+        // navigation there's a brief window with no port. Retry briefly before
+        // giving up rather than failing the call on a benign timing race.
+        timeoutHandler.postDelayed(
+            { tryEvaluateJavaScript(sessionKey, code, promise, attempt + 1) },
+            EVAL_BRIDGE_RETRY_DELAY_MS
+        )
+    }
+
+    fun storePendingPrompt(promptId: String, prompt: Any, result: GeckoResult<Any>) {
+        pendingPrompts[promptId] = PromptInfo(prompt, result)
+        schedulePromptTimeout(promptId)
+    }
+
+    fun storePendingPermission(requestId: String, result: GeckoResult<Int>) {
+        pendingPermissions[requestId] = result
+        schedulePermissionTimeout(requestId)
+    }
+
+    private fun schedulePromptTimeout(promptId: String) {
+        val runnable = Runnable {
+            pendingPrompts.remove(promptId)?.let {
+                GeckoLog.d(TAG, "Prompt timed out; dropping")
+                try {
+                    val response = when (val prompt = it.prompt) {
+                        is PopupPromptWrapper -> prompt.respond(false)
+                        is BeforeUnloadPromptWrapper -> prompt.confirm(false)
+                        is AuthPromptWrapper -> prompt.dismiss()
+                        // Alert/Button/Text prompts are stored unwrapped (see
+                        // GeckoViewPromptDelegate.handlePrompt). They previously
+                        // fell through to `else -> null`, leaving the GeckoResult
+                        // uncompleted and the UI prompt hanging until the page
+                        // navigated.
+                        is GeckoSession.PromptDelegate.BasePrompt -> prompt.dismiss()
+                        else -> {
+                            GeckoLog.w(TAG, "Unhandled prompt type on timeout")
+                            null
+                        }
+                    }
+                    response?.let { r -> it.result.complete(r) }
+                } catch (e: Throwable) {
+                    GeckoLog.w(TAG, "Error dismissing timed-out prompt", e)
                 }
+            }
+            timeoutRunnables.remove(promptId)
+        }
+        timeoutRunnables[promptId] = runnable
+        timeoutHandler.postDelayed(runnable, PROMPT_TIMEOUT_MS)
+    }
+
+    private fun schedulePermissionTimeout(requestId: String) {
+        val runnable = Runnable {
+            pendingPermissions.remove(requestId)?.let {
+                GeckoLog.d(TAG, "Permission timed out; denying")
+                it.complete(GeckoSession.PermissionDelegate.ContentPermission.VALUE_DENY)
+            }
+            timeoutRunnables.remove(requestId)
+        }
+        timeoutRunnables[requestId] = runnable
+        timeoutHandler.postDelayed(runnable, PROMPT_TIMEOUT_MS)
+    }
+
+    private fun cancelTimeout(id: String) {
+        timeoutRunnables.remove(id)?.let { timeoutHandler.removeCallbacks(it) }
+    }
+
+    private fun evictStaleSnapshots(dir: java.io.File) {
+        val cutoff = System.currentTimeMillis() - SNAPSHOT_TTL_MS
+        val toRemove = mutableListOf<java.io.File>()
+        dir.listFiles()?.forEach { f ->
+            if (f.lastModified() < cutoff) {
+                try { f.delete() } catch (_: Throwable) {}
+                toRemove.add(f)
+            }
+        }
+        if (toRemove.isEmpty()) return
+        synchronized(snapshotsLock) {
+            for (set in snapshotsBySession.values) {
+                set.removeAll(toRemove.toSet())
             }
         }
     }
 
-    internal fun storePendingPrompt(promptId: String, prompt: Any, result: GeckoResult<Any>) {
-        pendingPrompts[promptId] = PromptInfo(prompt, result)
+    private fun cleanupSnapshotsForSession(sessionKey: String) {
+        synchronized(snapshotsLock) {
+            val set = snapshotsBySession.remove(sessionKey) ?: return
+            for (f in set) {
+                try { f.delete() } catch (_: Throwable) {}
+            }
+        }
     }
 
-    internal fun storePendingPermission(requestId: String, result: GeckoResult<Int>) {
-        pendingPermissions[requestId] = result
+    // Test-only hooks (internal scope = library module only).
+    internal fun seedSnapshotForTest(sessionKey: String, file: java.io.File) {
+        synchronized(snapshotsLock) {
+            snapshotsBySession.getOrPut(sessionKey) { mutableSetOf() }.add(file)
+        }
     }
 
-    internal fun sendEvent(eventName: String, params: WritableMap?) {
-        Log.d(TAG, "Sending global event: $eventName")
+    internal fun snapshotsForSessionForTest(sessionKey: String): Set<java.io.File> =
+        synchronized(snapshotsLock) {
+            snapshotsBySession[sessionKey]?.toSet() ?: emptySet()
+        }
+
+    internal fun cleanupSnapshotsForSessionForTest(sessionKey: String) {
+        cleanupSnapshotsForSession(sessionKey)
+    }
+
+    fun sendEvent(eventName: String, params: WritableMap?) {
+        GeckoLog.d(TAG, "Sending global event")
         reactApplicationContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
             .emit(eventName, params)
     }
 
-    internal fun sendViewEvent(viewId: Int, eventName: String, params: WritableMap?) {
-        // Convert "onXxx" to "topXxx" for native event dispatching
+    fun sendViewEvent(viewId: Int, eventName: String, params: WritableMap?) {
         val nativeEventName = if (eventName.startsWith("on")) {
             "top" + eventName.substring(2)
         } else {
             eventName
         }
-        Log.d(TAG, "Sending view event: $nativeEventName to viewId: $viewId")
-        // Legacy `getJSModule(RCTEventEmitter)` throws IllegalArgumentException on
-        // BridgelessReactContext (New Architecture) — every GeckoView event (page
-        // start/stop/location-change) would emit an unhandled SoftException, and
-        // enough of them during unmount destroys the React host, leaving a white
-        // screen. UIManagerHelper.getEventDispatcherForReactTag works in both
-        // bridge and bridgeless modes; it returns null if the view is unmounted.
+        GeckoLog.d(TAG, "Sending view event")
         val dispatcher = UIManagerHelper.getEventDispatcherForReactTag(reactApplicationContext, viewId)
         if (dispatcher == null) {
-            Log.w(TAG, "No EventDispatcher for viewTag=$viewId, dropping $nativeEventName")
+            GeckoLog.d(TAG, "No EventDispatcher for view; dropping event")
             return
         }
-        dispatcher.dispatchEvent(GeckoGenericEvent(viewId, nativeEventName, params))
+        dispatcher.dispatchEvent(GeckoGenericEvent(-1, viewId, nativeEventName, params))
     }
 
     companion object {
         private const val TAG = "GeckoViewModule"
+        private const val PROMPT_TIMEOUT_MS = 60_000L
+
+        /** Eval connect-race retry budget: up to ~2s (20 × 100ms) for the bridge port to appear. */
+        private const val EVAL_BRIDGE_MAX_RETRIES = 20
+        private const val EVAL_BRIDGE_RETRY_DELAY_MS = 100L
+
+        /** Snapshots older than this are deleted on the next capture. */
+        private const val SNAPSHOT_TTL_MS: Long = 5L * 60L * 1000L
+
+        /**
+         * Schemes permitted via the public `loadUrl` API.
+         *
+         * `javascript:` is excluded — host apps that forward user input (deep
+         * link, QR code, pasted URL) would otherwise expose an XSS primitive
+         * against the currently loaded origin. [evaluateJavaScript] uses the
+         * trusted internal WebExtension bridge instead of public URL loading.
+         */
+        val ALLOWED_LOAD_SCHEMES = setOf("http", "https", "about")
+
+        fun isSafeLoadUrl(url: String): Boolean {
+            if (url.isEmpty()) return false
+            val parsed = try { Uri.parse(url) } catch (_: Throwable) { return false }
+            val scheme = parsed.scheme?.lowercase() ?: return false
+            return scheme in ALLOWED_LOAD_SCHEMES
+        }
     }
+}
+
+private fun ReadableMap.getBooleanOrDefault(name: String, defaultValue: Boolean): Boolean {
+    return if (hasKey(name) && !isNull(name)) getBoolean(name) else defaultValue
+}
+
+private fun ReadableMap.getIntOrDefault(name: String, defaultValue: Int): Int {
+    return if (hasKey(name) && !isNull(name)) getInt(name) else defaultValue
+}
+
+private fun ReadableMap.getLongOrDefault(name: String, defaultValue: Long): Long {
+    // ReadableMap has no getLong; doubles round-trip integer pixel counts safely.
+    return if (hasKey(name) && !isNull(name)) getDouble(name).toLong() else defaultValue
 }

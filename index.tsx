@@ -1,63 +1,99 @@
 declare const __DEV__: boolean;
-declare const global: any;
 
-import React, { forwardRef, useImperativeHandle, useEffect, useState } from 'react';
+import React, { forwardRef, useImperativeHandle, useState } from 'react';
 import {
-    requireNativeComponent,
     NativeModules,
     Platform,
-    ViewProps,
     View,
     Text,
     StyleSheet,
+    type HostComponent,
+    type ViewProps,
 } from 'react-native';
-import { GeckoViewProps, GeckoViewRef } from './src/types';
-import { detectFabricAvailability, hasFabricRuntime } from './src/fabricDetection';
+// The codegen spec module calls `codegenNativeComponent('GeckoView')` at
+// import time, which reaches into React Native's native bridge. Wrap the
+// import so the library still loads under Jest (where there is no bridge)
+// and test files can exercise the component via the mocked NativeModules.
+const NativeGeckoView: HostComponent<GeckoViewProps> = (() => {
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const mod = require('./src/GeckoViewNativeComponent');
+        return mod.default as HostComponent<GeckoViewProps>;
+    } catch {
+        // Fallback: codegen unavailable (e.g. under Jest). Tests stub
+        // `requireNativeComponent` in setup.
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { requireNativeComponent } = require('react-native');
+        return requireNativeComponent('GeckoView') as HostComponent<GeckoViewProps>;
+    }
+})();
+import type {
+    CookieBannerMode,
+    EnhancedTrackingProtectionLevel,
+    EvaluateJavaScriptResult,
+    GeckoViewProps,
+    GeckoViewRef,
+    GeckoSecurityOptions,
+} from './src/types';
+import { hasFabricRuntime } from './src/fabricDetection';
+
+/**
+ * Shape of the native `GeckoViewModule` turbo/legacy module. Mirrors the
+ * Kotlin `@ReactMethod` signatures in `GeckoViewModule.kt`.
+ */
+interface NativeGeckoViewModule {
+    configureSecurity(options: GeckoSecurityOptions): Promise<void>;
+    reload(sessionKey: string): void;
+    goBack(sessionKey: string): void;
+    goForward(sessionKey: string): void;
+    stop(sessionKey: string): void;
+    closeSession(sessionKey: string): void;
+    shutdown(): void;
+    loadUrl(sessionKey: string, url: string): void;
+    setUserAgent(sessionKey: string, userAgent: string): void;
+    resolvePrompt(promptId: string, confirm: boolean, text?: string, username?: string, password?: string): void;
+    resolvePermission(requestId: string, allow: boolean): void;
+    installWebExtension(assetPath: string): Promise<void>;
+    sendWebExtensionMessage(sessionKey: string, extensionId: string, message: string): Promise<void>;
+    setEnhancedTrackingProtectionLevel(level: EnhancedTrackingProtectionLevel): Promise<void>;
+    setCookieBannerMode(mode: CookieBannerMode): Promise<void>;
+    captureSnapshot(sessionKey: string): Promise<string>;
+    evaluateJavaScript(sessionKey: string, code: string): Promise<EvaluateJavaScriptResult>;
+}
 
 const LINKING_ERROR =
     `The package 'react-native-geckoview' doesn't seem to be linked. Make sure: \n\n` +
-    Platform.select({ ios: "- You have run 'pod install'\n", default: '' }) +
+    Platform.select({
+        ios: "- react-native-geckoview is Android-only; GeckoView has no iOS support.\n",
+        default: '',
+    }) +
     '- You rebuilt the app after installing the package\n' +
     '- You are not using Expo Go\n';
 
-// Prefer the static view-config (codegen) component when available.
-// In Bridgeless mode, `requireNativeComponent` can't reliably fetch view configs via UIManager.
-const NativeGeckoView = (() => {
-    try {
-        const component = require('./src/GeckoViewNativeComponent').default;
-        if (component) {
-            if (__DEV__) {
-                console.log('[GeckoView] Loading codegen component');
-            }
-            return component;
-        }
-    } catch (e) {
-        if (__DEV__) {
-            console.log('[GeckoView] Codegen component unavailable, falling back to requireNativeComponent');
-        }
+const isTestEnv = typeof process !== 'undefined' && process.env?.NODE_ENV === 'test';
+const devLog = (...args: unknown[]): void => {
+    if (__DEV__ && !isTestEnv) {
+        // eslint-disable-next-line no-console
+        console.log(...args);
     }
+};
 
-    if (__DEV__) {
-        console.log('[GeckoView] Loading legacy component via requireNativeComponent');
-    }
-    return requireNativeComponent<GeckoViewProps>('GeckoView');
-})();
+interface ViewConfigRegistry {
+    get?: (name: string) => unknown;
+}
 
 // Ensure direct event types (e.g. `topTitleChange`) are registered before native events fire.
-// In practice this avoids "Unsupported top level event type ..." errors in Fabric/Bridgeless.
+// In practice this avoids "Unsupported top level event type ..." errors in Bridgeless mode.
 function preloadViewConfig(): void {
-    if (process.env.NODE_ENV === 'test') return;
+    if (isTestEnv) return;
     try {
-        // Internal API: used defensively only.
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const registry = require('react-native/Libraries/Renderer/shims/ReactNativeViewConfigRegistry');
-        if (registry?.get) {
+        // Internal React Native API: only used as a defensive warm-up.
+        const registry: ViewConfigRegistry | undefined = require('react-native/Libraries/Renderer/shims/ReactNativeViewConfigRegistry');
+        if (typeof registry?.get === 'function') {
             registry.get('GeckoView');
         }
     } catch (e) {
-        if (__DEV__) {
-            console.log('[GeckoView] Failed to preload view config', e);
-        }
+        devLog('[GeckoView] Failed to preload view config', e);
     }
 }
 
@@ -74,9 +110,7 @@ class GeckoViewErrorBoundary extends React.Component<
     }
 
     componentDidCatch(error: Error) {
-        if (__DEV__) {
-            console.log('[GeckoView] Render error', error);
-        }
+        devLog('[GeckoView] Render error', error);
     }
 
     render() {
@@ -85,7 +119,6 @@ class GeckoViewErrorBoundary extends React.Component<
         }
 
         const hasFabric = hasFabricRuntime();
-        const fabricConfigAvailable = detectFabricAvailability('GeckoView');
 
         return (
             <View style={[styles.unsupported, this.props.style]}>
@@ -93,9 +126,7 @@ class GeckoViewErrorBoundary extends React.Component<
                     GeckoView failed to render in this build.
                 </Text>
                 <Text style={styles.unsupportedHint}>
-                    {hasFabric
-                        ? `Fabric runtime: yes (view config: ${fabricConfigAvailable ? 'found' : 'missing'})`
-                        : 'Fabric runtime: no'}
+                    Fabric runtime: {hasFabric ? 'yes' : 'no'}
                 </Text>
                 {__DEV__ ? (
                     <Text style={styles.unsupportedDetails} numberOfLines={8}>
@@ -103,75 +134,109 @@ class GeckoViewErrorBoundary extends React.Component<
                     </Text>
                 ) : null}
                 <Text style={styles.unsupportedHint}>
-                    If you enabled `newArchEnabled=true`, rebuild the native app and ensure codegen completed for `react-native-geckoview`.
+                    react-native-geckoview requires React Native 0.83+ with the New
+                    Architecture enabled. Rebuild the native app and ensure codegen
+                    completed for `react-native-geckoview`.
                 </Text>
             </View>
         );
     }
 }
 
-const GeckoViewModule = NativeModules.GeckoViewModule
-    ? NativeModules.GeckoViewModule
-    : new Proxy(
+const GeckoViewModule: NativeGeckoViewModule = NativeModules.GeckoViewModule
+    ? (NativeModules.GeckoViewModule as NativeGeckoViewModule)
+    : (new Proxy(
         {},
         {
             get() {
                 throw new Error(LINKING_ERROR);
             },
         }
+    ) as NativeGeckoViewModule);
+
+export function configureGeckoViewSecurity(options: GeckoSecurityOptions): Promise<void> {
+    return GeckoViewModule.configureSecurity(options);
+}
+
+/**
+ * React component that embeds a Mozilla GeckoView (Firefox rendering engine)
+ * inside a React Native tree.
+ *
+ * **Android-only.** Use an imperative `ref` to control navigation, resolve
+ * prompts/permissions, and evaluate JavaScript. See {@link GeckoViewRef}.
+ *
+ * @example
+ * ```tsx
+ * const ref = useRef<GeckoViewRef>(null);
+ * <GeckoView
+ *   ref={ref}
+ *   source={{ uri: 'https://example.com' }}
+ *   sessionKey="main"
+ *   onGeckoPageStop={(e) => console.log('loaded', e.nativeEvent.success)}
+ * />
+ * ```
+ */
+const GeckoView = forwardRef<GeckoViewRef, GeckoViewProps>((props, ref) => {
+    const [sessionKey] = useState(
+        () => props.sessionKey || `session-${Math.random().toString(36).substring(2, 11)}`
     );
 
-const GeckoView = forwardRef<GeckoViewRef, GeckoViewProps>((props, ref) => {
-    const [sessionKey] = useState(() => props.sessionKey || `session-${Math.random().toString(36).substr(2, 9)}`);
+    useImperativeHandle(
+        ref,
+        () => ({
+            reload: () => GeckoViewModule.reload(sessionKey),
+            goBack: () => GeckoViewModule.goBack(sessionKey),
+            goForward: () => GeckoViewModule.goForward(sessionKey),
+            stop: () => GeckoViewModule.stop(sessionKey),
+            closeSession: () => GeckoViewModule.closeSession(sessionKey),
+            shutdown: () => GeckoViewModule.shutdown(),
+            installWebExtension: (assetPath) => GeckoViewModule.installWebExtension(assetPath),
+            sendWebExtensionMessage: (extensionId, message) =>
+                GeckoViewModule.sendWebExtensionMessage(sessionKey, extensionId, message),
+            captureSnapshot: () => GeckoViewModule.captureSnapshot(sessionKey),
+            evaluateJavaScript: <T = EvaluateJavaScriptResult,>(code: string) =>
+                GeckoViewModule.evaluateJavaScript(sessionKey, code) as Promise<T>,
+            resolvePrompt: (promptId, confirm, text, username, password) =>
+                GeckoViewModule.resolvePrompt(promptId, confirm, text, username, password),
+            resolvePermission: (requestId, allow) =>
+                GeckoViewModule.resolvePermission(requestId, allow),
+            setEnhancedTrackingProtectionLevel: (level) =>
+                GeckoViewModule.setEnhancedTrackingProtectionLevel(level),
+            setCookieBannerMode: (mode) => GeckoViewModule.setCookieBannerMode(mode),
+            loadUrl: (url) => GeckoViewModule.loadUrl(sessionKey, url),
+            setUserAgent: (userAgent) => GeckoViewModule.setUserAgent(sessionKey, userAgent),
+        }),
+        [sessionKey]
+    );
 
-    useImperativeHandle(ref, () => ({
-        reload: () => GeckoViewModule.reload(sessionKey),
-        goBack: () => GeckoViewModule.goBack(sessionKey),
-        goForward: () => GeckoViewModule.goForward(sessionKey),
-        stop: () => GeckoViewModule.stop(sessionKey),
-        closeSession: () => GeckoViewModule.closeSession(sessionKey),
-        shutdown: () => GeckoViewModule.shutdown(),
-        installWebExtension: (assetPath: string) => GeckoViewModule.installWebExtension(assetPath),
-        sendWebExtensionMessage: (message: string) => GeckoViewModule.sendWebExtensionMessage(message),
-        captureSnapshot: (options?: any) => GeckoViewModule.captureSnapshot(sessionKey),
-        evaluateJavaScript: (code: string) => GeckoViewModule.evaluateJavaScript(sessionKey, code),
-        resolvePrompt: (promptId: string, confirm: boolean, text?: string, username?: string) =>
-            GeckoViewModule.resolvePrompt(promptId, confirm, text, username),
-        resolvePermission: (requestId: string, allow: boolean) =>
-            GeckoViewModule.resolvePermission(requestId, allow),
-        setEnhancedTrackingProtectionLevel: (level: 0 | 1 | 2) =>
-            GeckoViewModule.setEnhancedTrackingProtectionLevel(level),
-        setCookieBannerMode: (mode: 0 | 1 | 2) =>
-            GeckoViewModule.setCookieBannerMode(mode),
-        loadUrl: (url: string) => GeckoViewModule.loadUrl(sessionKey, url),
-        setUserAgent: (userAgent: string) => GeckoViewModule.setUserAgent(sessionKey, userAgent),
-    }));
-
-    useEffect(() => {
-        return () => {
-            // Intentionally do NOT close the session on unmount. Sessions are pooled in
-            // GeckoSessionManager (keyed by sessionKey) and deliberately outlive GeckoView
-            // mounts so consumers can remount to resume state during navigation transitions.
-            // Auto-closing here would blow away session state on every re-render and force
-            // getOrCreateSession to silently spin up a blank replacement on remount.
-            // Call ref.closeSession() explicitly when the session is truly done.
-        };
-    }, [sessionKey]);
+    // Sessions are pooled in GeckoSessionManager (keyed by sessionKey) and deliberately
+    // outlive GeckoView mounts. Auto-closing on unmount would discard session state on
+    // every re-render; consumers should call ref.closeSession() explicitly.
 
     return (
         <GeckoViewErrorBoundary style={props.style}>
-            <NativeGeckoView {...(props as any)} sessionKey={sessionKey} />
+            <NativeGeckoView {...props} sessionKey={sessionKey} />
         </GeckoViewErrorBoundary>
     );
 });
 
+GeckoView.displayName = 'GeckoView';
+
 export default GeckoView;
 
 // Re-export types for consumers
-export type { GeckoViewProps, GeckoViewRef } from './src/types';
+export type {
+    CookieBannerMode,
+    EnhancedTrackingProtectionLevel,
+    EvaluateJavaScriptResult,
+    GeckoEventHandler,
+    GeckoSecurityOptions,
+    GeckoViewProps,
+    GeckoViewRef,
+} from './src/types';
+export type * from './src/NativeEventPayloads';
 
 export const __TEST_ONLY__ = {
-    detectFabricAvailability,
     hasFabricRuntime,
 };
 

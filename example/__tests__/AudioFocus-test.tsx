@@ -17,14 +17,12 @@ import React, { useRef } from 'react';
 import { render, waitFor, act } from '@testing-library/react-native';
 import { NativeModules } from 'react-native';
 import GeckoView, { GeckoViewRef } from 'react-native-geckoview';
-import { clearFabricGlobals, fixtures } from './testUtils';
+import { fixtures } from './testUtils';
 
 // Use shared mock setup
-jest.mock('react-native', () => require('./testUtils').setupReactNativeMock());
 
 describe('Audio Focus Tests', () => {
     beforeEach(() => {
-        clearFabricGlobals();
         jest.clearAllMocks();
     });
 

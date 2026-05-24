@@ -10,7 +10,10 @@ class GeckoViewContentDelegate(
 
     override fun onTitleChange(session: GeckoSession, title: String?) {
         val safeTitle = title ?: ""
-        // Spatial Navigation Hack: Check for focus exit prefix
+        // Legacy spatial-navigation focus-exit fallback: older builds (and the
+        // extension's no-bridge injected-script path) signal focus exit via a
+        // document.title prefix. The primary path for the installed extension is
+        // now a native `focusExit` message handled in WebExtensionController.
         if (safeTitle.startsWith("__FOCUS_EXIT__:")) {
             val direction = safeTitle.substringAfter("__FOCUS_EXIT__:")
             val params = Arguments.createMap().apply {

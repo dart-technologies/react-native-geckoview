@@ -1,8 +1,8 @@
-// Clear Fabric globals to force legacy mode
-// Use type assertion to handle strict typing
-const g = global as Record<string, unknown>;
+// Jest setup: register the shared react-native mock once for every test file.
+// Previously each test file carried its own one-line boilerplate; centralizing
+// here keeps the mock surface in a single place.
 
-delete g.nativeFabricUIManager;
-delete g.__fabricUIManagerBinding;
-delete g.__getFabricUIManager;
-delete g.__globalObjectProxy;
+jest.mock('react-native', () => {
+    const { setupReactNativeMock } = require('./__tests__/testUtils');
+    return setupReactNativeMock();
+});

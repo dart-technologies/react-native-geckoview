@@ -2,18 +2,20 @@
 
 buildscript {
     ext {
-        buildToolsVersion = "35.0.0"
-        minSdkVersion = 24  // React Native 0.81+ requires API 24+
-        compileSdkVersion = 35
-        targetSdkVersion = 35
+        buildToolsVersion = "36.0.0"
+        minSdkVersion = 24  // React Native 0.83 requires API 24+
+        compileSdkVersion = 36
+        targetSdkVersion = 36
+        ndkVersion = "27.1.12297006"
+        kotlinVersion = "2.2.20"
     }
     repositories {
         google()
-        mavenCentral()  // jcenter() is deprecated
+        mavenCentral()
     }
     dependencies {
-        classpath("com.android.tools.build:gradle:8.9.1")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.10")
+        classpath("com.android.tools.build:gradle:8.12.0")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.20")
     }
 }
 

@@ -1,85 +1,44 @@
-declare const __DEV__: boolean;
-declare const global: any;
-
 /**
- * Fabric Detection Utilities
- * 
- * Detects whether React Native's Fabric renderer is available and whether
- * a specific native component is registered with it.
- * 
- * Compatible with React Native 0.74+ (legacy __nativeComponentRegistry)
- * and React Native 0.81+ (nativeFabricUIManager.getViewManagerConfig)
+ * Runtime check for React Native's Fabric renderer.
+ *
+ * Since v0.2.0 the library requires RN 0.83+ (Fabric-only), so this is only
+ * used by the error-boundary UX to render a helpful message if the native
+ * codegen component failed to register.
  */
 
-export const getGlobalRef = (): any => {
-    if (typeof global !== 'undefined') {
-        return global;
-    }
-    if (typeof window !== 'undefined') {
-        return window;
-    }
+type GlobalRef = {
+    nativeFabricUIManager?: unknown;
+    __fabricUIManagerBinding?: unknown;
+    __getFabricUIManager?: () => unknown;
+    __globalObjectProxy?: {
+        nativeFabricUIManager?: unknown;
+    };
+};
+
+const getGlobalRef = (): GlobalRef => {
+    /* istanbul ignore else: `globalThis` is defined in every supported JS
+       runtime (RN/Hermes, Node, browsers); the fallbacks below are purely
+       defensive for exotic engines and are unreachable under test. */
+    if (typeof globalThis !== 'undefined') return globalThis as GlobalRef;
+    /* istanbul ignore next: unreachable defensive fallback (see above). */
+    if (typeof global !== 'undefined') return global as unknown as GlobalRef;
+    /* istanbul ignore next: unreachable defensive fallback (see above). */
+    if (typeof window !== 'undefined') return window as unknown as GlobalRef;
+    /* istanbul ignore next: unreachable defensive fallback (see above). */
     return {};
 };
 
 /**
- * Check if the Fabric runtime is available (not just enabled in config)
+ * Returns `true` when the Fabric runtime is wired up on this JS context.
+ * Handles both the direct global and the Hermes `__globalObjectProxy` layout.
  */
-export const hasFabricRuntime = (globalRef: any = getGlobalRef()): boolean => {
-    // Check for Hermes-specific global proxy first
-    const fabricManager = globalRef?.__globalObjectProxy?.nativeFabricUIManager
-        ?? globalRef?.nativeFabricUIManager;
+export const hasFabricRuntime = (globalRef: GlobalRef = getGlobalRef()): boolean => {
+    const fabricManager =
+        globalRef.__globalObjectProxy?.nativeFabricUIManager ?? globalRef.nativeFabricUIManager;
 
     return (
         fabricManager != null ||
-        globalRef?.__fabricUIManagerBinding != null ||
-        typeof globalRef?.__getFabricUIManager === 'function'
+        globalRef.__fabricUIManagerBinding != null ||
+        typeof globalRef.__getFabricUIManager === 'function'
     );
-};
-
-/**
- * Get the component provider/config for a specific component
- * Supports both RN 0.81+ (getViewManagerConfig) and legacy (__nativeComponentRegistry)
- */
-export const getFabricComponentProvider = (
-    componentName: string,
-    globalRef: any = getGlobalRef(),
-) => {
-    // RN 0.81+: Use nativeFabricUIManager.getViewManagerConfig()
-    // This is the official API that the runtime uses
-    const fabricManager = globalRef?.__globalObjectProxy?.nativeFabricUIManager
-        ?? globalRef?.nativeFabricUIManager;
-
-    if (fabricManager && typeof fabricManager.getViewManagerConfig === 'function') {
-        try {
-            const config = fabricManager.getViewManagerConfig(componentName);
-            if (config != null) {
-                return () => config; // Return as function for consistency
-            }
-        } catch (e) {
-            // Component not registered, continue to fallback
-        }
-    }
-
-    // Legacy RN 0.74-0.80: Use __nativeComponentRegistry
-    const registry = globalRef?.__nativeComponentRegistry;
-    if (registry && typeof registry.get === 'function') {
-        return registry.get(componentName);
-    }
-
-    return undefined;
-};
-
-/**
- * Detect if Fabric is available AND a specific component is registered
- */
-export const detectFabricAvailability = (
-    componentName: string,
-    globalRef: any = getGlobalRef(),
-): boolean => {
-    if (!hasFabricRuntime(globalRef)) {
-        return false;
-    }
-
-    const componentProvider = getFabricComponentProvider(componentName, globalRef);
-    return componentProvider != null && (typeof componentProvider === 'function' || typeof componentProvider === 'object');
 };

@@ -1,11 +1,45 @@
 {
   "name": "react-native-geckoview",
   "title": "React Native GeckoView",
-  "version": "0.1.0",
-  "description": "GeckoView component for React Native with Fabric support",
-  "main": "index.tsx",
+  "version": "0.2.0",
+  "description": "GeckoView component for React Native with Fabric support (Android-only)",
+  "main": "lib/commonjs/index.js",
+  "module": "lib/module/index.js",
+  "types": "lib/typescript/index.d.ts",
+  "react-native": "index.tsx",
+  "source": "index.tsx",
+  "exports": {
+    ".": {
+      "types": "./lib/typescript/index.d.ts",
+      "react-native": "./index.tsx",
+      "import": "./lib/module/index.js",
+      "require": "./lib/commonjs/index.js",
+      "default": "./lib/commonjs/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "android/build.gradle",
+    "android/README.md",
+    "android/src/main",
+    "android/src/newarch",
+    "lib",
+    "src",
+    "index.tsx",
+    "react-native.config.js",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "clean": "rm -rf lib",
+    "build": "yarn clean && yarn build:commonjs && yarn build:module && yarn build:types",
+    "build:commonjs": "tsc -p tsconfig.build.json --module commonjs --outDir lib/commonjs",
+    "build:module": "tsc -p tsconfig.build.json --module esnext --outDir lib/module",
+    "build:types": "tsc -p tsconfig.build.json --emitDeclarationOnly --declaration --outDir lib/typescript",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "lint": "eslint index.tsx src --ext .ts,.tsx",
+    "test": "cd example && yarn test",
+    "prepublishOnly": "yarn build"
   },
   "repository": {
     "type": "git",
@@ -15,7 +49,10 @@
   "keywords": [
     "react-native",
     "geckoview",
-    "webview"
+    "webview",
+    "firefox",
+    "android",
+    "fabric"
   ],
   "author": {
     "name": "michow",
@@ -24,12 +61,12 @@
   "license": "MIT",
   "licenseFilename": "LICENSE",
   "readmeFilename": "README.md",
-  "dependencies": {
-    "@babel/runtime": "^7.24.0"
+  "engines": {
+    "node": ">=22"
   },
   "peerDependencies": {
-    "react": "^19.0.0",
-    "react-native": ">=0.81.0"
+    "react": "^19.2.0",
+    "react-native": ">=0.83.0"
   },
   "codegenConfig": {
     "name": "GeckoViewSpec",
@@ -40,9 +77,11 @@
     }
   },
   "devDependencies": {
-    "@types/react": "^19.0.0",
-    "react": "19.1.0",
-    "react-native": "0.81.5",
-    "typescript": "^5.0.0"
+    "@react-native/eslint-config": "^0.83.6",
+    "@types/react": "~19.2.2",
+    "eslint": "^9.20.0",
+    "react": "19.2.0",
+    "react-native": "0.83.6",
+    "typescript": "~5.9.2"
   }
 }

@@ -24,6 +24,7 @@ yarn-debug.log
 build/
 .idea/
 .gradle/
+.kotlin/
 local.properties
 *.iml
 *.hprof
@@ -82,6 +83,15 @@ dist/
 *.swp
 *.swo
 *~
+# Eclipse / Buildship
+.settings/
+.project
+.classpath
+
+# ===================
+# Tooling scratch
+# ===================
+.playwright-mcp/
 
 # ===================
 # Logs

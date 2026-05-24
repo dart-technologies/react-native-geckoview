@@ -15,16 +15,16 @@ import '../setup';
 import React from 'react';
 import renderer, { ReactTestRenderer, ReactTestInstance } from 'react-test-renderer';
 import { NativeModules } from 'react-native';
-import { clearFabricGlobals, fixtures, GeckoViewModuleMock } from './testUtils';
+import { fixtures, GeckoViewModuleMock } from './testUtils';
 
 // Use shared mock setup
-jest.mock('react-native', () => require('./testUtils').setupReactNativeMock());
 
 import GeckoView, { GeckoViewRef } from 'react-native-geckoview';
 
+const TEST_EXTENSION_ID = 'test-extension@example.com';
+
 describe('GeckoView Component - Advanced Tests', () => {
     beforeEach(() => {
-        clearFabricGlobals();
         jest.clearAllMocks();
     });
 
@@ -257,8 +257,12 @@ describe('GeckoView Component - Advanced Tests', () => {
             });
 
             const geckoModule = NativeModules.GeckoViewModule as GeckoViewModuleMock;
-            ref.current!.sendWebExtensionMessage('{"action": "test"}');
-            expect(geckoModule.sendWebExtensionMessage).toHaveBeenCalledWith('{"action": "test"}');
+            ref.current!.sendWebExtensionMessage(TEST_EXTENSION_ID, '{"action": "test"}');
+            expect(geckoModule.sendWebExtensionMessage).toHaveBeenCalledWith(
+                expect.any(String),
+                TEST_EXTENSION_ID,
+                '{"action": "test"}'
+            );
         });
 
         it('resolvePrompt calls native module with all parameters', () => {
@@ -270,7 +274,7 @@ describe('GeckoView Component - Advanced Tests', () => {
             const geckoModule = NativeModules.GeckoViewModule as GeckoViewModuleMock;
             ref.current!.resolvePrompt('prompt-123', true, 'text-input', 'username');
             expect(geckoModule.resolvePrompt).toHaveBeenCalledWith(
-                'prompt-123', true, 'text-input', 'username'
+                'prompt-123', true, 'text-input', 'username', undefined
             );
         });
 

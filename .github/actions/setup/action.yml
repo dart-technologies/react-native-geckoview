@@ -1,0 +1,54 @@
+name: "Setup environment"
+description: "Install Node, Java, and the library + example dependencies."
+
+inputs:
+  java:
+    description: "Whether to install JDK (for Android jobs)"
+    required: false
+    default: "false"
+  gradle:
+    description: "Whether to set up Gradle caching (for Android jobs)"
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version-file: ".nvmrc"
+        cache: yarn
+        cache-dependency-path: |
+          yarn.lock
+          example/yarn.lock
+
+    - name: Install root dependencies
+      shell: bash
+      run: yarn install --frozen-lockfile
+
+    - name: Install example dependencies
+      shell: bash
+      working-directory: example
+      run: yarn install --frozen-lockfile
+
+    - name: Set up JDK 21
+      if: inputs.java == 'true'
+      uses: actions/setup-java@v4
+      with:
+        distribution: zulu
+        java-version: "21"
+
+    - name: Set up Gradle
+      if: inputs.gradle == 'true'
+      uses: gradle/actions/setup-gradle@v4
+
+    - name: Cache Android SDK
+      if: inputs.gradle == 'true'
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.android/build-cache
+          ~/.gradle/caches/build-cache-1
+        key: android-sdk-${{ runner.os }}-${{ hashFiles('example/android/build.gradle', 'android/build.gradle') }}
+        restore-keys: |
+          android-sdk-${{ runner.os }}-

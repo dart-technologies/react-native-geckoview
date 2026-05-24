@@ -5,7 +5,6 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
-import android.util.Log
 import com.facebook.react.bridge.Arguments
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.MediaSession
@@ -33,23 +32,23 @@ class MediaDelegate(
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
             AudioManager.AUDIOFOCUS_GAIN -> {
-                Log.d(TAG, "Audio focus gained")
+                GeckoLog.d(TAG, "Audio focus gained")
                 activeMediaSession?.muteAudio(false)
             }
             AudioManager.AUDIOFOCUS_LOSS,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                Log.d(TAG, "Audio focus lost")
+                GeckoLog.d(TAG, "Audio focus lost")
                 activeMediaSession?.pause()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                Log.d(TAG, "Audio focus ducked")
+                GeckoLog.d(TAG, "Audio focus ducked")
                 activeMediaSession?.muteAudio(true)
             }
         }
     }
 
     override fun onPlay(session: GeckoSession, mediaSession: MediaSession) {
-        Log.d(TAG, "onPlay called for MediaSession")
+        GeckoLog.d(TAG, "onPlay called for MediaSession")
         activeMediaSession = mediaSession
         
         if (handleAudioFocus) {
@@ -63,7 +62,7 @@ class MediaDelegate(
     }
 
     override fun onPause(session: GeckoSession, mediaSession: MediaSession) {
-        Log.d(TAG, "onPause called for MediaSession")
+        GeckoLog.d(TAG, "onPause called for MediaSession")
         activeMediaSession = null
         
         if (handleAudioFocus) {
@@ -77,7 +76,7 @@ class MediaDelegate(
     }
 
     override fun onStop(session: GeckoSession, mediaSession: MediaSession) {
-        Log.d(TAG, "onStop called for MediaSession")
+        GeckoLog.d(TAG, "onStop called for MediaSession")
         activeMediaSession = null
         
         if (handleAudioFocus) {
@@ -91,7 +90,7 @@ class MediaDelegate(
     }
 
     override fun onActivated(session: GeckoSession, mediaSession: MediaSession) {
-        Log.d(TAG, "onActivated called for MediaSession")
+        GeckoLog.d(TAG, "onActivated called for MediaSession")
         // Don't request focus on activation, wait for actual play event
         val params = Arguments.createMap().apply {
             putString("action", "activated")
@@ -100,7 +99,7 @@ class MediaDelegate(
     }
 
     override fun onDeactivated(session: GeckoSession, mediaSession: MediaSession) {
-        Log.d(TAG, "onDeactivated called for MediaSession")
+        GeckoLog.d(TAG, "onDeactivated called for MediaSession")
         activeMediaSession = null
         
         if (handleAudioFocus) {
@@ -118,7 +117,7 @@ class MediaDelegate(
         mediaSession: MediaSession,
         meta: MediaSession.Metadata
     ) {
-        Log.d(TAG, "onMetadata called")
+        GeckoLog.d(TAG, "onMetadata called")
         val params = Arguments.createMap().apply {
             putString("action", "metadata")
             putString("title", meta.title)
@@ -149,9 +148,9 @@ class MediaDelegate(
 
             val result = audioManager.requestAudioFocus(newFocusRequest)
             if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-                Log.d(TAG, "Audio focus granted (API 26+)")
+                GeckoLog.d(TAG, "Audio focus granted")
             } else {
-                Log.w(TAG, "Audio focus request denied (API 26+)")
+                GeckoLog.w(TAG, "Audio focus request denied")
             }
         } else {
             @Suppress("DEPRECATION")
@@ -161,9 +160,9 @@ class MediaDelegate(
                 AudioManager.AUDIOFOCUS_GAIN
             )
             if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-                Log.d(TAG, "Audio focus granted (legacy)")
+                GeckoLog.d(TAG, "Audio focus granted")
             } else {
-                Log.w(TAG, "Audio focus request denied (legacy)")
+                GeckoLog.w(TAG, "Audio focus request denied")
             }
         }
     }
@@ -172,12 +171,12 @@ class MediaDelegate(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             focusRequest?.let {
                 audioManager.abandonAudioFocusRequest(it)
-                Log.d(TAG, "Audio focus abandoned (API 26+)")
+                GeckoLog.d(TAG, "Audio focus abandoned")
             }
         } else {
             @Suppress("DEPRECATION")
             audioManager.abandonAudioFocus(audioFocusChangeListener)
-            Log.d(TAG, "Audio focus abandoned (legacy)")
+            GeckoLog.d(TAG, "Audio focus abandoned")
         }
     }
 
