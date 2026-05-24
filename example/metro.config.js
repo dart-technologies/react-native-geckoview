@@ -17,6 +17,11 @@ const watchFolders = [path.resolve(__dirname, '..')];
 const config = {
   resolver: {
     extraNodeModules,
+    // The library is consumed via `link:../` and its own node_modules isn't
+    // installed (single-package repo). Resolve the linked source's bare deps
+    // (e.g. the `@babel/runtime` helpers babel injects into index.tsx) from
+    // the example's node_modules instead of the library's empty tree.
+    nodeModulesPaths: [path.resolve(__dirname, 'node_modules')],
     blockList: [
       // Exclude parent package's node_modules to prevent duplicate React
       new RegExp(`${path.resolve(__dirname, '..')}/node_modules/react/`),

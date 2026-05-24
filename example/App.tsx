@@ -252,7 +252,10 @@ interface ProgressBarProps {
 }
 
 const ProgressBar: React.FC<ProgressBarProps> = ({ progress, theme, visible, testID }) => {
-    if (!visible && progress === 0) return null;
+    // Gate visibility on `loading` only. The old `&& progress === 0` guard left
+    // the bar rendered at 100% width after load (handlePageStop sets progress=1
+    // while clearing loading), so the green bar never disappeared.
+    if (!visible) return null;
 
     return (
         <View testID={testID} style={[styles.progressContainer, { backgroundColor: theme.colors.progressBackground }]}>
