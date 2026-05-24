@@ -10,16 +10,16 @@ A React Native wrapper for Mozilla's [GeckoView](https://github.com/mozilla/geck
 - [Mozilla Maven Repository](https://maven.mozilla.org/maven2/)
 
 **Build Requirements**:
-- React Native: **0.83+** (Expo SDK 55-aligned)
+- React Native: **0.85+** (Expo SDK 56-aligned)
 - Gradle: 9.1.0
 - Android Gradle Plugin: 8.12.0
 - Kotlin: 2.2.20
 - Android compileSdkVersion: 36
-- Android minSdkVersion: 24 (required by RN 0.83; GeckoView needs 21+)
+- Android minSdkVersion: 26 (GeckoView 150 requires API 26+)
 
 ## New Architecture (Fabric) Only
 
-This library targets React Native 0.83+, which is **New-Architecture-only**.
+This library targets React Native 0.85+, which is **New-Architecture-only**.
 The `com.facebook.react` Gradle plugin runs codegen unconditionally, builds
 `libreact_codegen_geckoviewspec.so`, and registers the GeckoView
 ComponentDescriptor automatically. No `newArchEnabled` flag needed.

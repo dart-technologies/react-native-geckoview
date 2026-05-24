@@ -37,7 +37,7 @@ describe('GeckoView Component - Advanced Tests', () => {
                 tree = renderer.create(<GeckoView source={{ uri: 'https://example1.com' }} />);
             });
 
-            const instance1 = tree!.root.findByType('NativeGeckoView' as any);
+            const instance1 = tree!.root.findByType('GeckoView' as any);
             expect(instance1.props.source.uri).toBe('https://example1.com');
 
             // Update source
@@ -45,7 +45,7 @@ describe('GeckoView Component - Advanced Tests', () => {
                 tree!.update(<GeckoView source={{ uri: 'https://example2.com' }} />);
             });
 
-            const instance2 = tree!.root.findByType('NativeGeckoView' as any);
+            const instance2 = tree!.root.findByType('GeckoView' as any);
             expect(instance2.props.source.uri).toBe('https://example2.com');
         });
 
@@ -57,7 +57,7 @@ describe('GeckoView Component - Advanced Tests', () => {
                 tree = renderer.create(<GeckoView sessionKey={customKey} source={{ uri: 'https://example.com' }} />);
             });
 
-            const instance1 = tree!.root.findByType('NativeGeckoView' as any);
+            const instance1 = tree!.root.findByType('GeckoView' as any);
             expect(instance1.props.sessionKey).toBe(customKey);
 
             // Re-render with different source
@@ -65,7 +65,7 @@ describe('GeckoView Component - Advanced Tests', () => {
                 tree!.update(<GeckoView sessionKey={customKey} source={{ uri: 'https://example2.com' }} />);
             });
 
-            const instance2 = tree!.root.findByType('NativeGeckoView' as any);
+            const instance2 = tree!.root.findByType('GeckoView' as any);
             expect(instance2.props.sessionKey).toBe(customKey);
         });
 
@@ -75,7 +75,7 @@ describe('GeckoView Component - Advanced Tests', () => {
                 tree = renderer.create(<GeckoView source={{ uri: 'https://example.com' }} />);
             });
 
-            const instance = tree!.root.findByType('NativeGeckoView' as any);
+            const instance = tree!.root.findByType('GeckoView' as any);
             expect(instance.props.sessionKey).toBeDefined();
             expect(instance.props.sessionKey).toMatch(/^session-[a-z0-9]+$/);
         });
@@ -86,14 +86,14 @@ describe('GeckoView Component - Advanced Tests', () => {
                 tree = renderer.create(<GeckoView handleAudioFocus={false} />);
             });
 
-            let instance = tree!.root.findByType('NativeGeckoView' as any);
+            let instance = tree!.root.findByType('GeckoView' as any);
             expect(instance.props.handleAudioFocus).toBe(false);
 
             renderer.act(() => {
                 tree!.update(<GeckoView handleAudioFocus={true} />);
             });
 
-            instance = tree!.root.findByType('NativeGeckoView' as any);
+            instance = tree!.root.findByType('GeckoView' as any);
             expect(instance.props.handleAudioFocus).toBe(true);
         });
     });
@@ -109,7 +109,7 @@ describe('GeckoView Component - Advanced Tests', () => {
                 tree = renderer.create(<GeckoView onGeckoPageStart={onGeckoPageStart} />);
             });
 
-            const instance = tree!.root.findByType('NativeGeckoView' as any);
+            const instance = tree!.root.findByType('GeckoView' as any);
             expect(instance.props.onGeckoPageStart).toBe(onGeckoPageStart);
         });
 
@@ -121,7 +121,7 @@ describe('GeckoView Component - Advanced Tests', () => {
                 tree = renderer.create(<GeckoView onGeckoPageStop={onGeckoPageStop} />);
             });
 
-            const instance = tree!.root.findByType('NativeGeckoView' as any);
+            const instance = tree!.root.findByType('GeckoView' as any);
             expect(instance.props.onGeckoPageStop).toBe(onGeckoPageStop);
         });
 
@@ -133,7 +133,7 @@ describe('GeckoView Component - Advanced Tests', () => {
                 tree = renderer.create(<GeckoView onPageError={onPageError} />);
             });
 
-            const instance = tree!.root.findByType('NativeGeckoView' as any);
+            const instance = tree!.root.findByType('GeckoView' as any);
             expect(instance.props.onPageError).toBe(onPageError);
         });
 
@@ -145,7 +145,7 @@ describe('GeckoView Component - Advanced Tests', () => {
                 tree = renderer.create(<GeckoView onWebExtensionMessage={onWebExtensionMessage} />);
             });
 
-            const instance = tree!.root.findByType('NativeGeckoView' as any);
+            const instance = tree!.root.findByType('GeckoView' as any);
             expect(instance.props.onWebExtensionMessage).toBe(onWebExtensionMessage);
         });
 
@@ -163,7 +163,7 @@ describe('GeckoView Component - Advanced Tests', () => {
                 tree = renderer.create(<GeckoView {...(handlers as any)} />);
             });
 
-            const instance = tree!.root.findByType('NativeGeckoView' as any);
+            const instance = tree!.root.findByType('GeckoView' as any);
             Object.entries(handlers).forEach(([key, value]) => {
                 expect(instance.props[key]).toBe(value);
             });
@@ -372,7 +372,7 @@ describe('GeckoView Component - Advanced Tests', () => {
                 tree = renderer.create(<GeckoView style={customStyle} />);
             });
 
-            const instance = tree!.root.findByType('NativeGeckoView' as any);
+            const instance = tree!.root.findByType('GeckoView' as any);
             expect(instance.props.style).toEqual(customStyle);
         });
 
@@ -384,7 +384,7 @@ describe('GeckoView Component - Advanced Tests', () => {
                 tree = renderer.create(<GeckoView style={styles} />);
             });
 
-            const instance = tree!.root.findByType('NativeGeckoView' as any);
+            const instance = tree!.root.findByType('GeckoView' as any);
             expect(instance.props.style).toEqual(styles);
         });
     });
@@ -398,7 +398,7 @@ describe('GeckoView Component - Advanced Tests', () => {
                 tree = renderer.create(<GeckoView source={undefined} />);
             });
 
-            const instance = tree!.root.findByType('NativeGeckoView' as any);
+            const instance = tree!.root.findByType('GeckoView' as any);
             expect(instance.props.source).toBeUndefined();
         });
 
@@ -408,7 +408,7 @@ describe('GeckoView Component - Advanced Tests', () => {
                 tree = renderer.create(<GeckoView source={{} as any} />);
             });
 
-            const instance = tree!.root.findByType('NativeGeckoView' as any);
+            const instance = tree!.root.findByType('GeckoView' as any);
             expect(instance.props.source).toEqual({});
         });
 
@@ -420,7 +420,7 @@ describe('GeckoView Component - Advanced Tests', () => {
                 tree = renderer.create(<GeckoView source={{ html } as any} />);
             });
 
-            const instance = tree!.root.findByType('NativeGeckoView' as any);
+            const instance = tree!.root.findByType('GeckoView' as any);
             expect(instance.props.source.html).toBe(html);
         });
 
@@ -468,7 +468,7 @@ describe('GeckoView Component - Advanced Tests', () => {
                 });
             }
 
-            const instance = tree!.root.findByType('NativeGeckoView' as any);
+            const instance = tree!.root.findByType('GeckoView' as any);
             expect(instance.props.source.uri).toBe('https://update4.com');
         });
     });

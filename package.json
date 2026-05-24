@@ -65,8 +65,8 @@
     "node": ">=22"
   },
   "peerDependencies": {
-    "react": "^19.2.0",
-    "react-native": ">=0.83.0"
+    "react": "^19.2.3",
+    "react-native": ">=0.85.0"
   },
   "codegenConfig": {
     "name": "GeckoViewSpec",
@@ -77,11 +77,11 @@
     }
   },
   "devDependencies": {
-    "@react-native/eslint-config": "^0.83.6",
+    "@react-native/eslint-config": "^0.85.3",
     "@types/react": "~19.2.2",
     "eslint": "^9.20.0",
-    "react": "19.2.0",
-    "react-native": "0.83.6",
+    "react": "19.2.6",
+    "react-native": "0.85.3",
     "typescript": "~5.9.2"
   }
 }

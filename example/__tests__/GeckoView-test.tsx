@@ -36,7 +36,7 @@ describe('GeckoView Component', () => {
             tree = renderer.create(<GeckoView handleAudioFocus={true} />);
         });
         const instance: ReactTestInstance = tree!.root;
-        const nativeComponent = instance.findByType('NativeGeckoView' as any);
+        const nativeComponent = instance.findByType('GeckoView' as any);
         expect(nativeComponent.props.handleAudioFocus).toBe(true);
     });
 

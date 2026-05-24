@@ -8,7 +8,7 @@
 
 def DEFAULT_COMPILE_SDK_VERSION = 36
 def DEFAULT_BUILD_TOOLS_VERSION = '36.0.0'
-def DEFAULT_MIN_SDK_VERSION = 24
+def DEFAULT_MIN_SDK_VERSION = 26
 def DEFAULT_TARGET_SDK_VERSION = 36
 
 // https://maven.mozilla.org/?prefix=maven2/org/mozilla/geckoview/geckoview/
@@ -145,7 +145,7 @@ dependencies {
     // publication across the react-android coordinate and would silently
     // pick up a compromised or major-bumped release (supply-chain risk).
     // Host apps can still override via `rootProject.ext.reactNativeVersion`.
-    def reactNativeVersion = safeExtGet('reactNativeVersion', '0.83.+')
+    def reactNativeVersion = safeExtGet('reactNativeVersion', '0.85.+')
     implementation "com.facebook.react:react-android:${reactNativeVersion}"
     implementation "org.mozilla.geckoview:geckoview:${geckoviewVersion}"
 

@@ -13,7 +13,7 @@ bumps:
 
 - Kotlin deprecation fixes (event dispatch, `BaseReactPackage`, 6-param
   `ReactModuleInfo`, `MapBuilder` → `mapOf`).
-- Example app + tooling aligned to Expo SDK 55 / RN 0.83.6 (AGP 8.12,
+- Example app + tooling aligned to Expo SDK 56 / RN 0.85.3 (AGP 8.12,
   Kotlin 2.2.20, compileSdk 36).
 - GeckoView bumped to v150; Paper / Legacy Architecture removed
   (New-Architecture-only; old consumers pin `0.1.x`).
@@ -143,11 +143,11 @@ Two validation tasks remain outstanding:
 - **GeckoView `warmUp()` change in v150** — already handled via
   reflection in `GeckoRuntimeManager`. If v152+ promotes `warmUp` to a
   stable public method, remove the reflection guard.
-- **JS engine: Hermes v1** — Expo SDK 55 introduced Hermes v1 as
-  opt-in. The example app uses the default Hermes; revisit if startup
-  perf becomes a concern.
-- **Edge-to-edge on Android 16+** — SDK 55 makes edge-to-edge
+- **JS engine: Hermes v1** — Expo SDK 56 ships Hermes v1 as the
+  default (precompiled in the EAS XCFramework). The example app uses the
+  default Hermes; revisit if startup perf becomes a concern.
+- **Edge-to-edge on Android 16+** — SDK 56 makes edge-to-edge
   mandatory. The example app doesn't use `expo-system-ui`; if added,
   remove any `edgeToEdgeEnabled` config (no longer honored).
-- **`@react-native-community/cli`** — pinned at `^20.0.0` to match RN
-  0.83. Upgrades to v21+ may require minor config shifts.
+- **`@react-native-community/cli`** — pinned at `^20.1.3` to match RN
+  0.85. Later majors may require minor config shifts.

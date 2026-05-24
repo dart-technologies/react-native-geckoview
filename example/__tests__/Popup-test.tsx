@@ -32,7 +32,7 @@ describe('GeckoView Popup', () => {
         });
 
         // Find the native component
-        const nativeComponent = tree!.root.findByType('NativeGeckoView' as any) as ReactTestInstance;
+        const nativeComponent = tree!.root.findByType('GeckoView' as any) as ReactTestInstance;
         expect(nativeComponent.props.onGeckoPopup).toBe(onGeckoPopup);
     });
 
@@ -52,7 +52,7 @@ describe('GeckoView Popup', () => {
             );
         });
 
-        const nativeComponent = tree!.root.findByType('NativeGeckoView' as any) as ReactTestInstance;
+        const nativeComponent = tree!.root.findByType('GeckoView' as any) as ReactTestInstance;
         expect(nativeComponent.props.onGeckoPopup).toBeDefined();
     });
 });

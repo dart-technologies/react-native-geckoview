@@ -296,7 +296,7 @@ assumes it stays ON.
 ## 5. Fabric (New Architecture)
 
 `react-native-geckoview` **requires** the New Architecture (Fabric) on
-React Native 0.83+. Paper is not supported.
+React Native 0.85+. Paper is not supported.
 
 ### Verification
 
