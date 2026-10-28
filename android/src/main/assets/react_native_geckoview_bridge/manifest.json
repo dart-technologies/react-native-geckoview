@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "React Native GeckoView Bridge",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Internal trusted bridge for react-native-geckoview.",
   "browser_specific_settings": {
     "gecko": {
@@ -10,12 +10,18 @@
   },
   "permissions": [
     "nativeMessaging",
+    "nativeMessagingFromContent",
+    "geckoViewAddons",
     "<all_urls>"
   ],
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["bridge.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "bridge.js"
+      ],
       "run_at": "document_idle",
       "all_frames": false,
       "match_about_blank": true

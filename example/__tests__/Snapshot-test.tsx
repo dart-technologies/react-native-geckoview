@@ -22,11 +22,11 @@ const geckoModule = () =>
         closeSession: jest.Mock;
     };
 
-const mountGecko = (
+const mountGecko = async (
     sessionKey: string = fixtures.sessionKeys.default
-): React.RefObject<GeckoViewRef | null> => {
+): Promise<React.RefObject<GeckoViewRef | null>> => {
     const ref = createRef<GeckoViewRef>();
-    render(
+    await render(
         <GeckoView
             ref={ref}
             sessionKey={sessionKey}
@@ -41,22 +41,22 @@ describe('GeckoView captureSnapshot — JS surface', () => {
         jest.clearAllMocks();
     });
 
-    it('exposes captureSnapshot as a function on the ref', () => {
-        const ref = mountGecko();
+    it('exposes captureSnapshot as a function on the ref', async () => {
+        const ref = await mountGecko();
         expect(ref.current).not.toBeNull();
         expect(typeof ref.current!.captureSnapshot).toBe('function');
     });
 
-    it('returns a Promise', () => {
+    it('returns a Promise', async () => {
         geckoModule().captureSnapshot.mockResolvedValueOnce('/tmp/snapshot.png');
-        const ref = mountGecko();
+        const ref = await mountGecko();
         const result = ref.current!.captureSnapshot();
         expect(result).toBeInstanceOf(Promise);
     });
 
     it('forwards the sessionKey to the native module', async () => {
         geckoModule().captureSnapshot.mockResolvedValueOnce('/tmp/snapshot.png');
-        const ref = mountGecko('explicit-session');
+        const ref = await mountGecko('explicit-session');
         await act(async () => {
             await ref.current!.captureSnapshot();
         });
@@ -68,7 +68,7 @@ describe('GeckoView captureSnapshot — JS surface', () => {
         geckoModule().captureSnapshot.mockResolvedValueOnce(
             '/data/data/com.example/files/snapshot.png'
         );
-        const ref = mountGecko();
+        const ref = await mountGecko();
         await expect(ref.current!.captureSnapshot()).resolves.toBe(
             '/data/data/com.example/files/snapshot.png'
         );
@@ -80,7 +80,7 @@ describe('GeckoView captureSnapshot — JS surface', () => {
                 code: 'VIEW_NOT_FOUND',
             })
         );
-        const ref = mountGecko('missing');
+        const ref = await mountGecko('missing');
         await expect(ref.current!.captureSnapshot()).rejects.toThrow(
             /No GeckoView attached/
         );
@@ -92,7 +92,7 @@ describe('GeckoView captureSnapshot — JS surface', () => {
                 code: 'SNAPSHOT_TOO_LARGE',
             })
         );
-        const ref = mountGecko();
+        const ref = await mountGecko();
         await expect(ref.current!.captureSnapshot()).rejects.toThrow(/exceeds.*pixels/);
     });
 
@@ -102,7 +102,7 @@ describe('GeckoView captureSnapshot — JS surface', () => {
                 code: 'SNAPSHOT_ERROR',
             })
         );
-        const ref = mountGecko();
+        const ref = await mountGecko();
         await expect(ref.current!.captureSnapshot()).rejects.toThrow(/Bitmap is null/);
     });
 
@@ -112,7 +112,7 @@ describe('GeckoView captureSnapshot — JS surface', () => {
                 code: 'SNAPSHOT_ERROR',
             })
         );
-        const ref = mountGecko();
+        const ref = await mountGecko();
         await expect(ref.current!.captureSnapshot()).rejects.toThrow(/capturePixels failed/);
     });
 
@@ -120,7 +120,7 @@ describe('GeckoView captureSnapshot — JS surface', () => {
         geckoModule()
             .captureSnapshot.mockResolvedValueOnce('/tmp/snapshot-1.png')
             .mockResolvedValueOnce('/tmp/snapshot-2.png');
-        const ref = mountGecko('series-session');
+        const ref = await mountGecko('series-session');
         await act(async () => {
             await ref.current!.captureSnapshot();
             await ref.current!.captureSnapshot();
@@ -136,17 +136,17 @@ describe('GeckoView closeSession — JS surface (Fix 2 contract)', () => {
         jest.clearAllMocks();
     });
 
-    it('forwards the active sessionKey to the native module', () => {
-        const ref = mountGecko('to-close');
+    it('forwards the active sessionKey to the native module', async () => {
+        const ref = await mountGecko('to-close');
         ref.current!.closeSession();
         expect(geckoModule().closeSession).toHaveBeenCalledWith('to-close');
         expect(geckoModule().closeSession).toHaveBeenCalledTimes(1);
     });
 
-    it('isolates closeSession calls across two GeckoView instances with distinct keys', () => {
+    it('isolates closeSession calls across two GeckoView instances with distinct keys', async () => {
         const ref1 = createRef<GeckoViewRef>();
         const ref2 = createRef<GeckoViewRef>();
-        render(
+        await render(
             <>
                 <GeckoView ref={ref1} sessionKey="alpha" source={{ uri: fixtures.urls.example }} />
                 <GeckoView ref={ref2} sessionKey="beta" source={{ uri: fixtures.urls.mozilla }} />
@@ -166,7 +166,7 @@ describe('GeckoView closeSession — JS surface (Fix 2 contract)', () => {
         geckoModule().captureSnapshot.mockResolvedValue('/tmp/x.png');
         const ref1 = createRef<GeckoViewRef>();
         const ref2 = createRef<GeckoViewRef>();
-        render(
+        await render(
             <>
                 <GeckoView ref={ref1} sessionKey="alpha" source={{ uri: fixtures.urls.example }} />
                 <GeckoView ref={ref2} sessionKey="beta" source={{ uri: fixtures.urls.example }} />

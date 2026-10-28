@@ -17,19 +17,25 @@ runs:
     - uses: actions/setup-node@v4
       with:
         node-version-file: ".nvmrc"
-        cache: yarn
-        cache-dependency-path: |
-          yarn.lock
-          example/yarn.lock
+
+    - name: Enable the pinned package manager
+      shell: bash
+      run: corepack enable && corepack prepare yarn@4.10.3 --activate
+
+    - name: Cache Yarn packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.yarn/berry/cache
+        key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock', 'example/yarn.lock') }}
 
     - name: Install root dependencies
       shell: bash
-      run: yarn install --frozen-lockfile
+      run: yarn install --immutable
 
     - name: Install example dependencies
       shell: bash
       working-directory: example
-      run: yarn install --frozen-lockfile
+      run: yarn install --immutable
 
     - name: Set up JDK 21
       if: inputs.java == 'true'
@@ -52,3 +58,8 @@ runs:
         key: android-sdk-${{ runner.os }}-${{ hashFiles('example/android/build.gradle', 'android/build.gradle') }}
         restore-keys: |
           android-sdk-${{ runner.os }}-
+
+    - name: Install the Android platform required by GeckoView
+      if: inputs.gradle == 'true'
+      shell: bash
+      run: sdkmanager 'platforms;android-37.2' 'build-tools;37.0.0' 'ndk;27.1.12297006'

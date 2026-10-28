@@ -53,12 +53,12 @@ const setFabric = (present: boolean): (() => void) => {
     };
 };
 
-const withDev = (value: boolean, fn: () => void): void => {
+const withDev = async (value: boolean, fn: () => Promise<void>): Promise<void> => {
     const g = globalThis as { __DEV__?: boolean };
     const previous = g.__DEV__;
     g.__DEV__ = value;
     try {
-        fn();
+        await fn();
     } finally {
         g.__DEV__ = previous;
     }
@@ -79,53 +79,53 @@ describe('GeckoViewErrorBoundary', () => {
         console.error = originalError;
     });
 
-    it('renders children normally when nothing throws (happy path, codegen try-branch)', () => {
-        const { queryByText } = render(<GeckoView source={{ uri: fixtures.urls.example }} />);
+    it('renders children normally when nothing throws (happy path, codegen try-branch)', async () => {
+        const { queryByText } = await render(<GeckoView source={{ uri: fixtures.urls.example }} />);
         expect(queryByText('GeckoView failed to render in this build.')).toBeNull();
     });
 
-    it('renders the fallback UI when the native child throws on render', () => {
+    it('renders the fallback UI when the native child throws on render', async () => {
         throwState.error = new Error('codegen component not registered');
-        const { getByText } = render(<GeckoView source={{ uri: fixtures.urls.example }} />);
+        const { getByText } = await render(<GeckoView source={{ uri: fixtures.urls.example }} />);
 
         expect(getByText('GeckoView failed to render in this build.')).toBeTruthy();
         expect(getByText(/react-native-geckoview requires React Native 0\.83\+/)).toBeTruthy();
     });
 
-    it('shows "Fabric runtime: yes" when a Fabric manager is present on the global', () => {
+    it('shows "Fabric runtime: yes" when a Fabric manager is present on the global', async () => {
         const restore = setFabric(true);
         try {
             throwState.error = new Error('boom');
-            const { getByText } = render(<GeckoView source={{ uri: fixtures.urls.example }} />);
+            const { getByText } = await render(<GeckoView source={{ uri: fixtures.urls.example }} />);
             expect(getByText('Fabric runtime: yes')).toBeTruthy();
         } finally {
             restore();
         }
     });
 
-    it('shows "Fabric runtime: no" when no Fabric manager is present', () => {
+    it('shows "Fabric runtime: no" when no Fabric manager is present', async () => {
         const restore = setFabric(false);
         try {
             throwState.error = new Error('boom');
-            const { getByText } = render(<GeckoView source={{ uri: fixtures.urls.example }} />);
+            const { getByText } = await render(<GeckoView source={{ uri: fixtures.urls.example }} />);
             expect(getByText('Fabric runtime: no')).toBeTruthy();
         } finally {
             restore();
         }
     });
 
-    it('renders the error detail text under __DEV__', () => {
-        withDev(true, () => {
+    it('renders the error detail text under __DEV__', async () => {
+        await withDev(true, async () => {
             throwState.error = new Error('detailed failure message');
-            const { getByText } = render(<GeckoView source={{ uri: fixtures.urls.example }} />);
+            const { getByText } = await render(<GeckoView source={{ uri: fixtures.urls.example }} />);
             expect(getByText('detailed failure message')).toBeTruthy();
         });
     });
 
-    it('omits the error detail text when __DEV__ is false', () => {
-        withDev(false, () => {
+    it('omits the error detail text when __DEV__ is false', async () => {
+        await withDev(false, async () => {
             throwState.error = new Error('hidden in production');
-            const { queryByText, getByText } = render(
+            const { queryByText, getByText } = await render(
                 <GeckoView source={{ uri: fixtures.urls.example }} />
             );
             expect(getByText('GeckoView failed to render in this build.')).toBeTruthy();
@@ -133,11 +133,11 @@ describe('GeckoViewErrorBoundary', () => {
         });
     });
 
-    it('falls back to String(error) when the thrown error has an empty message', () => {
-        withDev(true, () => {
+    it('falls back to String(error) when the thrown error has an empty message', async () => {
+        await withDev(true, async () => {
             // Empty message -> `error?.message` falsy -> `|| error` renders String(error).
             throwState.error = new Error('');
-            const { getByText } = render(<GeckoView source={{ uri: fixtures.urls.example }} />);
+            const { getByText } = await render(<GeckoView source={{ uri: fixtures.urls.example }} />);
             // String(new Error('')) === 'Error'
             expect(getByText('Error')).toBeTruthy();
         });

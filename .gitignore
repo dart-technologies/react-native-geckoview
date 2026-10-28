@@ -98,3 +98,6 @@ dist/
 # ===================
 logs/
 *.log
+
+# Expo host tooling may inspect this package during prebuild.
+.expo/

@@ -49,6 +49,11 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     override fun getName() = "GeckoViewModule"
 
+    override fun getConstants(): Map<String, Any> = mapOf(
+        "isAutomotive" to reactApplicationContext.packageManager
+            .hasSystemFeature(android.content.pm.PackageManager.FEATURE_AUTOMOTIVE)
+    )
+
     @ReactMethod
     fun configureSecurity(options: ReadableMap, promise: Promise) {
         val configured = GeckoRuntimeManager.configureSecurity(
@@ -75,21 +80,25 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     @ReactMethod
     fun reload(sessionKey: String) {
+        if (!GeckoSessionManager.isPlaybackAllowed()) return
         GeckoSessionManager.getOrCreateSession(sessionKey).reload()
     }
 
     @ReactMethod
     fun goBack(sessionKey: String) {
+        if (!GeckoSessionManager.isPlaybackAllowed()) return
         GeckoSessionManager.getOrCreateSession(sessionKey).goBack()
     }
 
     @ReactMethod
     fun goForward(sessionKey: String) {
+        if (!GeckoSessionManager.isPlaybackAllowed()) return
         GeckoSessionManager.getOrCreateSession(sessionKey).goForward()
     }
 
     @ReactMethod
     fun stop(sessionKey: String) {
+        if (!GeckoSessionManager.isPlaybackAllowed()) return
         GeckoSessionManager.getOrCreateSession(sessionKey).stop()
     }
 
@@ -108,6 +117,7 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     @ReactMethod
     fun loadUrl(sessionKey: String, url: String) {
+        if (!GeckoSessionManager.isPlaybackAllowed()) return
         if (!isSafeLoadUrl(url)) {
             GeckoLog.d(TAG, "Rejecting loadUrl with disallowed scheme")
             return
@@ -117,6 +127,7 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     @ReactMethod
     fun setUserAgent(sessionKey: String, userAgent: String) {
+        if (!GeckoSessionManager.isPlaybackAllowed()) return
         val session = GeckoSessionManager.getOrCreateSession(sessionKey)
         if (userAgent.isEmpty()) {
             session.settings.userAgentMode = org.mozilla.geckoview.GeckoSessionSettings.USER_AGENT_MODE_MOBILE
@@ -277,6 +288,10 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     @ReactMethod
     fun captureSnapshot(sessionKey: String, promise: Promise) {
+        if (!GeckoSessionManager.isPlaybackAllowed()) {
+            promise.reject("PLAYBACK_RESTRICTED", "Media is blocked by vehicle UX restrictions")
+            return
+        }
         val session = GeckoSessionManager.getOrCreateSession(sessionKey)
         val view = GeckoSessionManager.getView(session)
 
@@ -352,6 +367,10 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     @ReactMethod
     fun evaluateJavaScript(sessionKey: String, code: String, promise: Promise) {
+        if (!GeckoSessionManager.isPlaybackAllowed()) {
+            promise.reject("PLAYBACK_RESTRICTED", "Media is blocked by vehicle UX restrictions")
+            return
+        }
         GeckoSessionManager.getOrCreateSession(sessionKey)
         tryEvaluateJavaScript(sessionKey, code, promise, attempt = 0)
     }
@@ -492,7 +511,7 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             eventName
         }
         GeckoLog.d(TAG, "Sending view event")
-        val dispatcher = UIManagerHelper.getEventDispatcherForReactTag(reactApplicationContext, viewId)
+        val dispatcher = UIManagerHelper.getEventDispatcher(reactApplicationContext)
         if (dispatcher == null) {
             GeckoLog.d(TAG, "No EventDispatcher for view; dropping event")
             return

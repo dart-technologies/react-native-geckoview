@@ -6,7 +6,7 @@ interface NativeProps extends ViewProps {
     source?: { uri: string };
     handleAudioFocus?: boolean;
     contentBlockingEnabled?: boolean;
-    cookieBannerMode?: CodegenTypes.WithDefault<'reject' | 'accept' | 'none', 'reject'>;
+    cookieBannerMode?: CodegenTypes.WithDefault<'reject' | 'accept' | 'none', 'none'>;
     desktopMode?: CodegenTypes.WithDefault<boolean, true>;
 
     // Event handlers matching types.ts

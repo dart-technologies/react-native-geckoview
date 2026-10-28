@@ -994,6 +994,49 @@ class WebExtensionTest {
 
         assert(ok)
         assert(idSlot.captured == WebExtensionController.INTERNAL_BRIDGE_EXTENSION_ID)
-        assert(uriSlot.captured.endsWith(WebExtensionController.INTERNAL_BRIDGE_ASSET_PATH))
+        assert(uriSlot.captured.endsWith("/${WebExtensionController.INTERNAL_BRIDGE_ASSET_PATH}/"))
     }
+    @Test
+    fun `trusted bridge binds both existing sessions and later sessions`() {
+        mockkObject(GeckoSessionManager)
+        val existing = mockk<GeckoSession>(relaxed = true)
+        val later = mockk<GeckoSession>(relaxed = true)
+        every { GeckoSessionManager.getAllSessions() } returns mapOf("existing" to existing)
+        val sdkController = mockk<org.mozilla.geckoview.WebExtensionController>(relaxed = true)
+        every { runtime.webExtensionController } returns sdkController
+        val bridge = mockk<WebExtension>(relaxed = true)
+        every { sdkController.ensureBuiltIn(any(), WebExtensionController.INTERNAL_BRIDGE_EXTENSION_ID) } returns GeckoResult.fromValue(bridge)
+        val controller = WebExtensionController(runtime)
+        controller.installInternalBridge()
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        controller.bindInternalBridge(later)
+        verify { existing.webExtensionController.setMessageDelegate(bridge, any(), WebExtensionController.NATIVE_APP_ID) }
+        verify { later.webExtensionController.setMessageDelegate(bridge, any(), WebExtensionController.NATIVE_APP_ID) }
+    }
+
+    @Test
+    fun `arbitrary installed extensions do not receive the trusted content-script binding`() {
+        val sdkController = mockk<org.mozilla.geckoview.WebExtensionController>(relaxed = true)
+        every { runtime.webExtensionController } returns sdkController
+        every { sdkController.installBuiltIn(any()) } returns GeckoResult.fromValue(mockk(relaxed = true))
+        val session = mockk<GeckoSession>(relaxed = true)
+        val controller = WebExtensionController(runtime)
+        controller.installExtension("custom_ext")
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        controller.bindInternalBridge(session)
+        verify(exactly = 0) { session.webExtensionController.setMessageDelegate(any(), any(), any()) }
+    }
+
+    @Test
+    fun `directory extension URIs have exactly one trailing slash`() {
+        val sdkController = mockk<org.mozilla.geckoview.WebExtensionController>(relaxed = true)
+        every { runtime.webExtensionController } returns sdkController
+        every { sdkController.installBuiltIn(any()) } returns GeckoResult.fromValue(mockk(relaxed = true))
+        val controller = WebExtensionController(runtime)
+        controller.installExtension("custom_ext")
+        controller.installExtension("custom_ext/")
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        verify(exactly = 2) { sdkController.installBuiltIn("resource://android/assets/custom_ext/") }
+    }
+
 }

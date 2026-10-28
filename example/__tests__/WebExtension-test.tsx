@@ -44,7 +44,7 @@ describe('Web Extension Tests', () => {
                 );
             };
 
-            render(<TestComponent />);
+            await render(<TestComponent />);
 
             const geckoModule = NativeModules.GeckoViewModule as GeckoViewModuleMock;
             await waitFor(() => {
@@ -69,7 +69,7 @@ describe('Web Extension Tests', () => {
                 return <GeckoView ref={geckoRef} source={{ uri: fixtures.urls.example }} />;
             };
 
-            render(<TestComponent />);
+            await render(<TestComponent />);
 
             const geckoModule = NativeModules.GeckoViewModule as GeckoViewModuleMock;
             await waitFor(() => {
@@ -93,7 +93,7 @@ describe('Web Extension Tests', () => {
                 return <GeckoView ref={geckoRef} source={{ uri: fixtures.urls.example }} />;
             };
 
-            render(<TestComponent />);
+            await render(<TestComponent />);
 
             const geckoModule = NativeModules.GeckoViewModule as GeckoViewModuleMock;
             await waitFor(() => {
@@ -124,7 +124,7 @@ describe('Web Extension Tests', () => {
                 );
             };
 
-            render(<TestComponent />);
+            await render(<TestComponent />);
 
             const geckoModule = NativeModules.GeckoViewModule as GeckoViewModuleMock;
             await waitFor(() => {
@@ -152,7 +152,7 @@ describe('Web Extension Tests', () => {
                 return <GeckoView ref={geckoRef} source={{ uri: fixtures.urls.example }} />;
             };
 
-            render(<TestComponent />);
+            await render(<TestComponent />);
 
             const geckoModule = NativeModules.GeckoViewModule as GeckoViewModuleMock;
             await waitFor(() => {
@@ -167,7 +167,7 @@ describe('Web Extension Tests', () => {
         it('should handle web extension messages from native', async () => {
             const onWebExtensionMessage = jest.fn();
 
-            const { getByTestId }: RenderResult = render(
+            const { getByTestId }: RenderResult = await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onWebExtensionMessage={onWebExtensionMessage}
@@ -201,7 +201,7 @@ describe('Web Extension Tests', () => {
             };
 
             // Should not throw
-            expect(() => render(<TestComponent />)).not.toThrow();
+            expect(async () => await render(<TestComponent />)).not.toThrow();
         });
 
         it('should handle malformed extension messages', async () => {
@@ -223,7 +223,7 @@ describe('Web Extension Tests', () => {
             };
 
             // Should not throw
-            expect(() => render(<TestComponent />)).not.toThrow();
+            expect(async () => await render(<TestComponent />)).not.toThrow();
         });
 
         it('should handle missing ref gracefully', () => {
@@ -240,7 +240,7 @@ describe('Web Extension Tests', () => {
                 return <GeckoView source={{ uri: fixtures.urls.example }} />;
             };
 
-            expect(() => render(<TestComponent />)).not.toThrow();
+            expect(async () => await render(<TestComponent />)).not.toThrow();
         });
 
         it('should handle extension installation failures from native', async () => {
@@ -267,7 +267,7 @@ describe('Web Extension Tests', () => {
                 return <GeckoView ref={geckoRef} source={{ uri: fixtures.urls.example }} />;
             };
 
-            render(<TestComponent />);
+            await render(<TestComponent />);
 
             // Error callback should be invoked
             await waitFor(() => {
@@ -302,7 +302,7 @@ describe('Web Extension Tests', () => {
                 return <GeckoView ref={geckoRef} source={{ uri: fixtures.urls.example }} />;
             };
 
-            render(<TestComponent />);
+            await render(<TestComponent />);
 
             await waitFor(() => {
                 expect(onError).toHaveBeenCalled();
@@ -325,7 +325,7 @@ describe('Web Extension Tests', () => {
                 return <GeckoView ref={geckoRef} source={{ uri: fixtures.urls.example }} />;
             };
 
-            render(<TestComponent />);
+            await render(<TestComponent />);
 
             const geckoModule = NativeModules.GeckoViewModule as GeckoViewModuleMock;
             await waitFor(() => {

@@ -5,10 +5,10 @@ React Native library integrating Mozilla's GeckoView (Firefox's rendering engine
 ## Quick Reference
 
 ```bash
-# JavaScript tests (216 tests)
+# JavaScript tests (253 tests)
 cd example && yarn test
 
-# Kotlin tests (230 tests, both variants)
+# Kotlin tests (debug and release variants)
 cd example/android && ./gradlew :react-native-geckoview:testDebugUnitTest
 cd example/android && ./gradlew :react-native-geckoview:testReleaseUnitTest
 
@@ -98,8 +98,8 @@ you override them, preserve the promise-returning contract or
 
 | Platform | Tests | Est. Coverage |
 |----------|-------|---------------|
-| JavaScript | 216 | ~85% |
-| Kotlin | 230 | ~80% |
+| JavaScript | 253 | ~85% |
+| Kotlin | 425 per variant (2 skipped) | ~80% |
 | E2E | 13 | Integration |
 
 Kotlin suite runs under both `testDebugUnitTest` and `testReleaseUnitTest`;

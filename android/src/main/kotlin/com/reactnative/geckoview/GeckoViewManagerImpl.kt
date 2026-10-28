@@ -33,6 +33,7 @@ class GeckoViewManagerImpl {
     }
 
     fun setSessionKey(view: GeckoView, sessionKey: String?) {
+        if (!GeckoSessionManager.isPlaybackAllowed()) return
         if (sessionKey == null) return
         try {
             val session = GeckoSessionManager.getOrCreateSession(sessionKey)
@@ -161,6 +162,7 @@ class GeckoViewManagerImpl {
     }
 
     fun onDropViewInstance(view: GeckoView) {
+        GeckoSessionManager.unregisterView(view)
         try {
             audioFocusMap.remove(view)
             pendingUris.remove(view)
@@ -181,6 +183,7 @@ class GeckoViewManagerImpl {
     }
 
     private fun loadUriWithRetry(view: GeckoView, uri: String, retryCount: Int = 0) {
+        if (!GeckoSessionManager.isPlaybackAllowed()) return
         val session = view.session
 
         if (session == null) {

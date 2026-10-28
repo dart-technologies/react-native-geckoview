@@ -114,8 +114,8 @@ jobs:
           node-version-file: ".nvmrc"
 
       - name: Audit root
-        run: yarn install --frozen-lockfile && yarn audit --level high || true
+        run: corepack enable && yarn install --immutable && yarn npm audit --severity high --recursive
 
       - name: Audit example
         working-directory: example
-        run: yarn install --frozen-lockfile && yarn audit --level high || true
+        run: corepack enable && yarn install --immutable && yarn npm audit --severity high --recursive

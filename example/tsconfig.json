@@ -1,12 +1,16 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "module": "commonjs",
+    "module": "esnext",
     "allowJs": true,
     "noEmit": true,
-    "baseUrl": ".",
     "typeRoots": [
       "./node_modules/@types"
+    ],
+    "types": [
+      "react",
+      "jest",
+      "node"
     ]
   },
   "include": [

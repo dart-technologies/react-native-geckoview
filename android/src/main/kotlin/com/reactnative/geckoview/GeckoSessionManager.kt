@@ -1,6 +1,8 @@
 package com.reactnative.geckoview
 
 import android.content.Context
+import android.content.pm.PackageManager
+import com.facebook.react.bridge.UiThreadUtil
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
 
@@ -10,6 +12,18 @@ object GeckoSessionManager {
         java.util.concurrent.ConcurrentHashMap<String, Boolean>()
     )
     @Volatile private var context: Context? = null
+    @Volatile private var playbackAllowed: Boolean? = null
+
+    fun isPlaybackAllowed(): Boolean = playbackAllowed == true
+
+    /** Called by the host's native per-display UX restriction listener, before JS notification. */
+    fun setPlaybackAllowed(allowed: Boolean) {
+        playbackAllowed = allowed
+        if (!allowed) UiThreadUtil.runOnUiThread {
+            closeAllSessions()
+        }
+        // Clearing UXR never reopens a pooled session or resumes media.
+    }
 
     /**
      * Install the application Context and backfill any sessions that were
@@ -21,6 +35,9 @@ object GeckoSessionManager {
     @Synchronized
     fun init(appContext: Context) {
         context = appContext
+        if (playbackAllowed == null) {
+            playbackAllowed = !appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)
+        }
         sessions.forEach { (key, session) ->
             ensureSessionOpen(key, session)
         }
@@ -50,7 +67,10 @@ object GeckoSessionManager {
     @Synchronized
     fun releaseSession(key: String) {
         openedSessionKeys.remove(key)
-        sessions.remove(key)?.close()
+        sessions.remove(key)?.let { session ->
+            views.remove(session)
+            session.close()
+        }
     }
 
     @Synchronized
@@ -64,9 +84,11 @@ object GeckoSessionManager {
         }
         sessions.clear()
         openedSessionKeys.clear()
+        views.clear()
     }
 
     private fun ensureSessionOpen(key: String, session: GeckoSession) {
+        if (!isPlaybackAllowed()) return
         if (openedSessionKeys.contains(key)) {
             return
         }
@@ -82,24 +104,32 @@ object GeckoSessionManager {
         } catch (e: Exception) {
             GeckoLog.w(TAG, "Failed to open GeckoSession", e)
         }
+        if (openedSessionKeys.contains(key)) {
+            GeckoRuntimeManager.getWebExtensionController()?.bindInternalBridge(session)
+        }
     }
 
     // WeakHashMap is not thread-safe, yet it's written from the UI thread
     // (registerView) and read from the Gecko message thread (getAllViews/getView
     // via WebExtensionController). Wrap it and hold the monitor while iterating.
-    private val views: MutableMap<GeckoSession, org.mozilla.geckoview.GeckoView> =
+    private val views: MutableMap<GeckoSession, java.lang.ref.WeakReference<org.mozilla.geckoview.GeckoView>> =
         java.util.Collections.synchronizedMap(java.util.WeakHashMap())
 
     fun registerView(session: GeckoSession, view: org.mozilla.geckoview.GeckoView) {
-        views[session] = view
+        views[session] = java.lang.ref.WeakReference(view)
+    }
+
+    /** A pooled session must not retain a dropped view or its Activity. */
+    fun unregisterView(view: org.mozilla.geckoview.GeckoView) {
+        synchronized(views) { views.entries.removeAll { it.value.get() == null || it.value.get() === view } }
     }
 
     fun getView(session: GeckoSession): org.mozilla.geckoview.GeckoView? {
-        return views[session]
+        return views[session]?.get()
     }
 
     fun getAllViews(): List<org.mozilla.geckoview.GeckoView> {
-        return synchronized(views) { views.values.toList() }
+        return synchronized(views) { views.values.mapNotNull { it.get() }.distinct() }
     }
 
     fun getAllSessions() = sessions.toMap()

@@ -1092,8 +1092,7 @@ class GeckoViewModuleTest {
         val cb = mockk<org.mozilla.geckoview.ContentBlocking.Settings>(relaxed = true)
         every { runtime.settings } returns rtSettings
         every { rtSettings.contentBlocking } returns cb
-        // ContentBlockingController re-throws non-IAE failures (e.g. GeckoView < 108).
-        every { cb.setCookieBannerMode(any()) } throws RuntimeException("unsupported on this build")
+        // GeckoView 159 removed cookie banner actions. The bridge must reject.
         every { GeckoRuntimeManager.getRuntime() } returns runtime
 
         val promise: Promise = mockk(relaxed = true)
@@ -1104,12 +1103,12 @@ class GeckoViewModuleTest {
     }
 
     @Test
-    fun `setCookieBannerMode resolves on a valid mode`() {
+    fun `setCookieBannerMode resolves on disabled mode`() {
         mockkObject(GeckoRuntimeManager)
         every { GeckoRuntimeManager.getRuntime() } returns mockk(relaxed = true)
 
         val promise: Promise = mockk(relaxed = true)
-        newModule().setCookieBannerMode(1, promise)
+        newModule().setCookieBannerMode(0, promise)
 
         verify { promise.resolve(null) }
     }
@@ -1291,7 +1290,7 @@ class GeckoViewModuleTest {
     fun `sendViewEvent rewrites on-prefixed names to top and dispatches`() {
         mockkStatic(UIManagerHelper::class)
         val dispatcher = mockk<com.facebook.react.uimanager.events.EventDispatcher>(relaxed = true)
-        every { UIManagerHelper.getEventDispatcherForReactTag(any(), 42) } returns dispatcher
+        every { UIManagerHelper.getEventDispatcher(any()) } returns dispatcher
 
         val module = newModule()
         module.sendViewEvent(42, "onGeckoPageStart", JavaOnlyMap())
@@ -1306,7 +1305,7 @@ class GeckoViewModuleTest {
     @Test
     fun `sendViewEvent drops the event when no dispatcher is available`() {
         mockkStatic(UIManagerHelper::class)
-        every { UIManagerHelper.getEventDispatcherForReactTag(any(), any()) } returns null
+        every { UIManagerHelper.getEventDispatcher(any()) } returns null
 
         val module = newModule()
         // No dispatcher -> early return, no crash.
@@ -1317,7 +1316,7 @@ class GeckoViewModuleTest {
     fun `sendViewEvent passes a non-on-prefixed name through unchanged`() {
         mockkStatic(UIManagerHelper::class)
         val dispatcher = mockk<com.facebook.react.uimanager.events.EventDispatcher>(relaxed = true)
-        every { UIManagerHelper.getEventDispatcherForReactTag(any(), 9) } returns dispatcher
+        every { UIManagerHelper.getEventDispatcher(any()) } returns dispatcher
 
         val module = newModule()
         module.sendViewEvent(9, "customEvent", JavaOnlyMap())

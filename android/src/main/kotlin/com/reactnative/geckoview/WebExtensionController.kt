@@ -17,6 +17,7 @@ import java.util.UUID
 
 class WebExtensionController(private val runtime: GeckoRuntime) {
     private var extension: WebExtension? = null
+    private var internalBridge: WebExtension? = null
     private val ports: MutableMap<PortKey, WebExtension.Port> =
         Collections.synchronizedMap(mutableMapOf())
     private val pendingEval: MutableMap<String, PendingEval> =
@@ -73,7 +74,7 @@ class WebExtensionController(private val runtime: GeckoRuntime) {
             return
         }
 
-        val builtInUri = "resource://android/assets/$assetPath"
+        val builtInUri = "resource://android/assets/${assetPath.trimEnd('/')}/"
         val extensionId = forcedExtensionId ?: when (assetPath.trimEnd('/')) {
             "spatial_navigation" -> "spatial-navigation@geckoview.dev"
             else -> null
@@ -87,6 +88,12 @@ class WebExtensionController(private val runtime: GeckoRuntime) {
 
         installResult.accept({ ext ->
             if (reportAsUserExtension) extension = ext
+            if (forcedExtensionId == INTERNAL_BRIDGE_EXTENSION_ID && ext != null) {
+                internalBridge = ext
+                // ensureBuiltIn completes asynchronously: bind sessions which
+                // were opened before the trusted extension became available.
+                GeckoSessionManager.getAllSessions().values.forEach { bindInternalBridge(it) }
+            }
             // Register under every native-app id we bridge. The internal eval
             // bridge connects via "react_native_geckoview"; the spatial-nav
             // extension's relay is pinned to "flutter_geckoview" (unoverridable
@@ -100,6 +107,14 @@ class WebExtensionController(private val runtime: GeckoRuntime) {
             GeckoLog.e(TAG, "Error installing extension", e)
             onInstalled?.invoke(false, e)
         })
+    }
+
+    /** Content-script messaging requires a session delegate, not only the
+     * extension-level background delegate. Only the APK's trusted eval bridge
+     * receives this binding. See Mozilla's consumer/docs/web-extensions guide. */
+    fun bindInternalBridge(session: org.mozilla.geckoview.GeckoSession) {
+        val bridge = internalBridge ?: return
+        session.webExtensionController.setMessageDelegate(bridge, messageDelegate, NATIVE_APP_ID)
     }
 
     fun sendMessage(sessionKey: String, extensionId: String, message: String): Boolean {

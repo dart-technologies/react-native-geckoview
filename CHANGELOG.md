@@ -6,6 +6,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### SDK 58 / AAOS modernization
+
+- Align the library and independently buildable example with React Native
+  0.88, React 19.3, TypeScript 6, Gradle 9.4.1 and AGP 9.2.1.
+- Pin GeckoView 159.0.20261022150525, Kotlin 2.4.20 and Media3 1.11.1 in
+  `android/versions.json`. GeckoView requires Android compile SDK 37.2;
+  the target remains API 36 and the minimum remains API 26.
+- Use public React Native component registration and host dependency alignment.
+- Close native sessions when AAOS playback is disallowed, keep a manual resume
+  authorization latch, and remove released views from the weak session registry.
+- Install the trusted evaluation bridge using a canonical folder URI and bind
+  content messaging to each session, including sessions opened before installation.
+- GeckoView 159 removed the cookie-banner handling API. `cookieBannerHandling`
+  modes 1 and 2 now report an unsupported-operation error; mode 0 remains a
+  no-op. Consumers must not assume automatic consent handling is available.
+- Migrate tests to awaited Testing Library 14 operations and verify both native
+  build variants alongside standalone library and example checks.
+
 ### Security
 
 Security audit and hardening pass. 24 findings across 5 severity tiers

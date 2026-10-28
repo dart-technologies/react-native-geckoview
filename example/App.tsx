@@ -14,8 +14,6 @@ import {
     Pressable,
     Alert,
     Modal,
-    NativeSyntheticEvent,
-    TextInputSubmitEditingEventData,
     ViewStyle,
     TextStyle,
     StatusBar,
@@ -551,7 +549,6 @@ export default function App(): React.JSX.Element {
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
             <StatusBar
                 barStyle={theme.mode === 'dark' ? 'light-content' : 'dark-content'}
-                backgroundColor={theme.colors.surface}
             />
 
             {/* Browser App Bar */}

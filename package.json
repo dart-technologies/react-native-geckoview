@@ -28,16 +28,17 @@
     "index.tsx",
     "react-native.config.js",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "android/versions.json"
   ],
   "scripts": {
     "clean": "rm -rf lib",
     "build": "yarn clean && yarn build:commonjs && yarn build:module && yarn build:types",
-    "build:commonjs": "tsc -p tsconfig.build.json --module commonjs --outDir lib/commonjs",
+    "build:commonjs": "tsc -p tsconfig.build.json --module node16 --moduleResolution node16 --outDir lib/commonjs",
     "build:module": "tsc -p tsconfig.build.json --module esnext --outDir lib/module",
     "build:types": "tsc -p tsconfig.build.json --emitDeclarationOnly --declaration --outDir lib/typescript",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
-    "lint": "eslint index.tsx src --ext .ts,.tsx",
+    "lint": "ESLINT_USE_FLAT_CONFIG=false eslint index.tsx src --ext .ts,.tsx",
     "test": "cd example && yarn test",
     "prepublishOnly": "yarn build"
   },
@@ -62,11 +63,11 @@
   "licenseFilename": "LICENSE",
   "readmeFilename": "README.md",
   "engines": {
-    "node": ">=22"
+    "node": "^22.13.0 || ^24.3.0 || >=26.0.0"
   },
   "peerDependencies": {
-    "react": "^19.2.3",
-    "react-native": ">=0.85.0"
+    "react": "^19.3.0",
+    "react-native": ">=0.88.0"
   },
   "codegenConfig": {
     "name": "GeckoViewSpec",
@@ -77,11 +78,13 @@
     }
   },
   "devDependencies": {
-    "@react-native/eslint-config": "^0.85.3",
-    "@types/react": "~19.2.2",
-    "eslint": "^9.20.0",
-    "react": "19.2.6",
-    "react-native": "0.85.3",
-    "typescript": "~5.9.2"
-  }
+    "@react-native/eslint-config": "0.88.0",
+    "@types/react": "~19.3.0",
+    "eslint": "^8.57.1",
+    "prettier": "^3.8.0",
+    "react": "19.3.0",
+    "react-native": "0.88.0",
+    "typescript": "~6.0.3"
+  },
+  "packageManager": "yarn@4.10.3"
 }

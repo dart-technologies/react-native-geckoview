@@ -70,34 +70,13 @@ const LINKING_ERROR =
     '- You rebuilt the app after installing the package\n' +
     '- You are not using Expo Go\n';
 
-const isTestEnv = typeof process !== 'undefined' && process.env?.NODE_ENV === 'test';
+const isTestEnv = (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process?.env?.NODE_ENV === 'test';
 const devLog = (...args: unknown[]): void => {
     if (__DEV__ && !isTestEnv) {
         // eslint-disable-next-line no-console
         console.log(...args);
     }
 };
-
-interface ViewConfigRegistry {
-    get?: (name: string) => unknown;
-}
-
-// Ensure direct event types (e.g. `topTitleChange`) are registered before native events fire.
-// In practice this avoids "Unsupported top level event type ..." errors in Bridgeless mode.
-function preloadViewConfig(): void {
-    if (isTestEnv) return;
-    try {
-        // Internal React Native API: only used as a defensive warm-up.
-        const registry: ViewConfigRegistry | undefined = require('react-native/Libraries/Renderer/shims/ReactNativeViewConfigRegistry');
-        if (typeof registry?.get === 'function') {
-            registry.get('GeckoView');
-        }
-    } catch (e) {
-        devLog('[GeckoView] Failed to preload view config', e);
-    }
-}
-
-preloadViewConfig();
 
 class GeckoViewErrorBoundary extends React.Component<
     { children: React.ReactNode; style?: ViewProps['style'] },

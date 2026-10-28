@@ -15,18 +15,7 @@ type GlobalRef = {
     };
 };
 
-const getGlobalRef = (): GlobalRef => {
-    /* istanbul ignore else: `globalThis` is defined in every supported JS
-       runtime (RN/Hermes, Node, browsers); the fallbacks below are purely
-       defensive for exotic engines and are unreachable under test. */
-    if (typeof globalThis !== 'undefined') return globalThis as GlobalRef;
-    /* istanbul ignore next: unreachable defensive fallback (see above). */
-    if (typeof global !== 'undefined') return global as unknown as GlobalRef;
-    /* istanbul ignore next: unreachable defensive fallback (see above). */
-    if (typeof window !== 'undefined') return window as unknown as GlobalRef;
-    /* istanbul ignore next: unreachable defensive fallback (see above). */
-    return {};
-};
+const getGlobalRef = (): GlobalRef => globalThis as GlobalRef;
 
 /**
  * Returns `true` when the Fabric runtime is wired up on this JS context.

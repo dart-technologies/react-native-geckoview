@@ -5,6 +5,17 @@ recorded in [CHANGELOG.md](../CHANGELOG.md); this file tracks what's left.
 
 ---
 
+## SDK 58 integration baseline
+
+The current Dart TV integration uses RN 0.88 / React 19.3, GeckoView 159,
+Kotlin 2.4.20 and Media3 1.11.1. See `android/versions.json` and the
+unreleased changelog for authoritative pins and the removed cookie-banner API.
+The Android compile SDK is 37.2 because the GeckoView AAR declares that minimum;
+target API 36 and min API 26 are unchanged. The historical shipped baseline
+below describes the earlier release, not the integration being prepared.
+
+---
+
 ## Already shipped
 
 The following are done and live on `main` — see

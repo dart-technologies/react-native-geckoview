@@ -41,6 +41,8 @@ class GeckoSessionManagerTest {
         mockkObject(GeckoRuntimeManager)
         every { GeckoRuntimeManager.getRuntime(any()) } returns mockRuntime
         
+        GeckoSessionManager.setPlaybackAllowed(true)
+
         // Initialize the manager
         GeckoSessionManager.init(context)
         
@@ -52,6 +54,8 @@ class GeckoSessionManagerTest {
     
     @After
     fun tearDown() {
+        GeckoSessionManager.setPlaybackAllowed(true)
+        GeckoSessionManager.closeAllSessions()
         // Clean up all mocks
         unmockkAll()
     }
@@ -348,4 +352,54 @@ class GeckoSessionManagerTest {
         val stranger: GeckoSession = mockk(relaxed = true)
         assertEquals(null, GeckoSessionManager.getSessionKey(stranger))
     }
+    @Test
+    fun `restrictions close existing sessions before JavaScript can act`() {
+        GeckoSessionManager.getOrCreateSession("playing-browser")
+        assertTrue(GeckoSessionManager.getAllSessions().isNotEmpty())
+        GeckoSessionManager.setPlaybackAllowed(false)
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertFalse(GeckoSessionManager.isPlaybackAllowed())
+        assertTrue(GeckoSessionManager.getAllSessions().isEmpty())
+    }
+
+    @Test
+    fun `parking does not reopen sessions or resume browser media`() {
+        GeckoSessionManager.setPlaybackAllowed(false)
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        GeckoSessionManager.setPlaybackAllowed(true)
+        assertTrue(GeckoSessionManager.isPlaybackAllowed())
+        assertTrue(GeckoSessionManager.getAllSessions().isEmpty())
+    }
+
+    @Test
+    fun `dropping a view removes its Activity association but preserves a pooled session`() {
+        val session = GeckoSessionManager.getOrCreateSession("pooled")
+        val view = mockk<org.mozilla.geckoview.GeckoView>(relaxed = true)
+        GeckoSessionManager.registerView(session, view)
+        GeckoSessionManager.unregisterView(view)
+        assertEquals(null, GeckoSessionManager.getView(session))
+        assertTrue(GeckoSessionManager.getAllViews().isEmpty())
+        assertSame(session, GeckoSessionManager.getAllSessions()["pooled"])
+    }
+
+    @Test
+    fun `releasing a session removes its view association immediately`() {
+        val session = GeckoSessionManager.getOrCreateSession("released")
+        val view = mockk<org.mozilla.geckoview.GeckoView>(relaxed = true)
+        GeckoSessionManager.registerView(session, view)
+        GeckoSessionManager.releaseSession("released")
+        assertEquals(null, GeckoSessionManager.getView(session))
+        assertTrue(GeckoSessionManager.getAllViews().isEmpty())
+    }
+
+    @Test
+    fun `a restriction removes all view associations without relying on GC or JS`() {
+        val session = GeckoSessionManager.getOrCreateSession("restricted")
+        val view = mockk<org.mozilla.geckoview.GeckoView>(relaxed = true)
+        GeckoSessionManager.registerView(session, view)
+        GeckoSessionManager.setPlaybackAllowed(false)
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertTrue(GeckoSessionManager.getAllViews().isEmpty())
+    }
+
 }

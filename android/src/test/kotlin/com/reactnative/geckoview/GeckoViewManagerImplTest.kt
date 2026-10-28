@@ -253,41 +253,14 @@ class GeckoViewManagerImplTest {
     }
 
     @Test
-    fun `setCookieBannerMode maps reject string to mode 1`() {
+    fun `unsupported cookie consent prop does not crash the view manager`() {
         mockkObject(GeckoRuntimeManager)
-        val runtime = mockk<org.mozilla.geckoview.GeckoRuntime>(relaxed = true)
-        val rtSettings = mockk<org.mozilla.geckoview.GeckoRuntimeSettings>(relaxed = true)
-        val cb = mockk<org.mozilla.geckoview.ContentBlocking.Settings>(relaxed = true)
-        every { runtime.settings } returns rtSettings
-        every { rtSettings.contentBlocking } returns cb
-        every { GeckoRuntimeManager.getRuntime(any()) } returns runtime
-
+        every { GeckoRuntimeManager.getRuntime(any()) } returns mockk(relaxed = true)
+        // The imperative API rejects unsupported modes; a view prop logs the
+        // error without crashing rendering or pretending to click consent.
         manager.setCookieBannerMode(geckoView, "reject")
-
-        verify {
-            cb.setCookieBannerMode(
-                org.mozilla.geckoview.ContentBlocking.CookieBannerMode.COOKIE_BANNER_MODE_REJECT
-            )
-        }
-    }
-
-    @Test
-    fun `setCookieBannerMode maps an unknown string to disabled`() {
-        mockkObject(GeckoRuntimeManager)
-        val runtime = mockk<org.mozilla.geckoview.GeckoRuntime>(relaxed = true)
-        val rtSettings = mockk<org.mozilla.geckoview.GeckoRuntimeSettings>(relaxed = true)
-        val cb = mockk<org.mozilla.geckoview.ContentBlocking.Settings>(relaxed = true)
-        every { runtime.settings } returns rtSettings
-        every { rtSettings.contentBlocking } returns cb
-        every { GeckoRuntimeManager.getRuntime(any()) } returns runtime
-
-        manager.setCookieBannerMode(geckoView, "garbage")
-
-        verify {
-            cb.setCookieBannerMode(
-                org.mozilla.geckoview.ContentBlocking.CookieBannerMode.COOKIE_BANNER_MODE_DISABLED
-            )
-        }
+        manager.setCookieBannerMode(geckoView, "accept")
+        manager.setCookieBannerMode(geckoView, "none")
     }
 
     // ========== onDropViewInstance ==========

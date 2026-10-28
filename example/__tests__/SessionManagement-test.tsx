@@ -35,7 +35,7 @@ describe('GeckoView Session Management E2E', () => {
             const testUrl = fixtures.urls.example;
 
             // First mount
-            const { unmount }: RenderResult = render(
+            const { unmount }: RenderResult = await render(
                 <GeckoView
                     source={{ uri: testUrl }}
                     sessionKey={sessionKey}
@@ -47,10 +47,10 @@ describe('GeckoView Session Management E2E', () => {
             });
 
             // Unmount
-            unmount();
+            await unmount();
 
             // Remount with same sessionKey - session should be preserved
-            const { getByTestId }: RenderResult = render(
+            const { getByTestId }: RenderResult = await render(
                 <GeckoView
                     source={{ uri: testUrl }}
                     sessionKey={sessionKey}
@@ -79,7 +79,7 @@ describe('GeckoView Session Management E2E', () => {
                 ) : null;
             };
 
-            const { rerender, getByTestId }: RenderResult = render(<TestComponent />);
+            const { rerender, getByTestId }: RenderResult = await render(<TestComponent />);
 
             await act(async () => {
                 // Simulate navigation that would create history
@@ -87,7 +87,7 @@ describe('GeckoView Session Management E2E', () => {
             });
 
             // Component remounts should preserve history
-            rerender(<TestComponent />);
+            await rerender(<TestComponent />);
 
             await waitFor(() => {
                 expect(getByTestId('gecko-with-history')).toBeDefined();
@@ -95,7 +95,7 @@ describe('GeckoView Session Management E2E', () => {
         });
 
         it('should create new session when sessionKey changes', async () => {
-            const { rerender }: RenderResult = render(
+            const { rerender }: RenderResult = await render(
                 <GeckoView
                     source={{ uri: 'https://example.com' }}
                     sessionKey="session-1"
@@ -108,7 +108,7 @@ describe('GeckoView Session Management E2E', () => {
             });
 
             // Change sessionKey
-            rerender(
+            await rerender(
                 <GeckoView
                     source={{ uri: 'https://example.com' }}
                     sessionKey="session-2"
@@ -140,7 +140,7 @@ describe('GeckoView Session Management E2E', () => {
                 </>
             );
 
-            const { getByTestId }: RenderResult = render(<MultiInstanceComponent />);
+            const { getByTestId }: RenderResult = await render(<MultiInstanceComponent />);
 
             await waitFor(() => {
                 const viewA = getByTestId('gecko-a');
@@ -169,7 +169,7 @@ describe('GeckoView Session Management E2E', () => {
                 </>
             );
 
-            const { getByTestId }: RenderResult = render(<SharedSessionComponent />);
+            const { getByTestId }: RenderResult = await render(<SharedSessionComponent />);
 
             await waitFor(() => {
                 expect(getByTestId('gecko-1')).toBeDefined();
@@ -191,7 +191,7 @@ describe('GeckoView Session Management E2E', () => {
                 </>
             );
 
-            const { getByTestId }: RenderResult = render(<IsolatedComponent />);
+            const { getByTestId }: RenderResult = await render(<IsolatedComponent />);
 
             await waitFor(() => {
                 expect(getByTestId('isolated-1')).toBeDefined();
@@ -203,7 +203,7 @@ describe('GeckoView Session Management E2E', () => {
 
     describe('Lifecycle and Cleanup', () => {
         it('should clean up session on unmount without sessionKey', async () => {
-            const { unmount, getByTestId }: RenderResult = render(
+            const { unmount, getByTestId }: RenderResult = await render(
                 <GeckoView source={{ uri: 'https://example.com' }} testID="temp-view" />
             );
 
@@ -212,13 +212,13 @@ describe('GeckoView Session Management E2E', () => {
             });
 
             // Unmount should trigger cleanup
-            unmount();
+            await unmount();
 
             // Verify cleanup completed
         });
 
         it('should preserve session on unmount when sessionKey is provided', async () => {
-            const { unmount }: RenderResult = render(
+            const { unmount }: RenderResult = await render(
                 <GeckoView
                     source={{ uri: 'https://example.com' }}
                     sessionKey="persistent"
@@ -230,10 +230,10 @@ describe('GeckoView Session Management E2E', () => {
                 await new Promise<void>(resolve => setTimeout(resolve, 100));
             });
 
-            unmount();
+            await unmount();
 
             // Remount with same session key
-            const { getByTestId }: RenderResult = render(
+            const { getByTestId }: RenderResult = await render(
                 <GeckoView
                     source={{ uri: 'https://example.com' }}
                     sessionKey="persistent"
@@ -260,11 +260,11 @@ describe('GeckoView Session Management E2E', () => {
             );
 
             for (let i = 0; i < 5; i++) {
-                const { unmount }: RenderResult = render(<RapidCycleComponent iteration={i} />);
+                const { unmount }: RenderResult = await render(<RapidCycleComponent iteration={i} />);
                 await act(async () => {
                     await new Promise<void>(resolve => setTimeout(resolve, 50));
                 });
-                unmount();
+                await unmount();
             }
 
             // Verify separate native components created
@@ -293,7 +293,7 @@ describe('GeckoView Session Management E2E', () => {
                 );
             };
 
-            render(<TestComponent />);
+            await render(<TestComponent />);
 
             const geckoModule = NativeModules.GeckoViewModule as GeckoViewModuleMock;
             await waitFor(() => {
@@ -329,7 +329,7 @@ describe('GeckoView Session Management E2E', () => {
                 );
             };
 
-            render(<MultiViewComponent />);
+            await render(<MultiViewComponent />);
 
             const geckoModule = NativeModules.GeckoViewModule as GeckoViewModuleMock;
             await waitFor(() => {
@@ -344,7 +344,7 @@ describe('GeckoView Session Management E2E', () => {
             const onPageStart1 = jest.fn();
             const onPageStart2 = jest.fn();
 
-            const { getByTestId }: RenderResult = render(
+            const { getByTestId }: RenderResult = await render(
                 <>
                     <GeckoView
                         source={{ uri: 'https://example.com' }}

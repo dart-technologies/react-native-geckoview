@@ -70,95 +70,25 @@ class ContentBlockingControllerTest {
     }
 
     @Test
-    fun `setCookieBannerMode - DISABLED (0)`() {
+    fun `disabled cookie banner policy remains a no-op`() {
         controller.setCookieBannerMode(0)
-        verify {
-            contentBlocking.setCookieBannerMode(
-                ContentBlocking.CookieBannerMode.COOKIE_BANNER_MODE_DISABLED
-            )
+    }
+
+    @Test
+    fun `removed cookie banner policies reject rather than silently accepting`() {
+        for (mode in listOf(1, 2)) {
+            org.junit.Assert.assertThrows(UnsupportedOperationException::class.java) {
+                controller.setCookieBannerMode(mode)
+            }
         }
     }
 
     @Test
-    fun `setCookieBannerMode - REJECT (1)`() {
-        controller.setCookieBannerMode(1)
-        verify {
-            contentBlocking.setCookieBannerMode(
-                ContentBlocking.CookieBannerMode.COOKIE_BANNER_MODE_REJECT
-            )
-        }
-    }
-
-    @Test
-    fun `setCookieBannerMode - REJECT_OR_ACCEPT (2)`() {
-        controller.setCookieBannerMode(2)
-        verify {
-            contentBlocking.setCookieBannerMode(
-                ContentBlocking.CookieBannerMode.COOKIE_BANNER_MODE_REJECT_OR_ACCEPT
-            )
-        }
-    }
-
-    @Test(expected = IllegalArgumentException::class)
-    fun `setCookieBannerMode throws on out-of-range mode`() {
-        controller.setCookieBannerMode(999)
-    }
-
-    @Test(expected = IllegalArgumentException::class)
-    fun `setCookieBannerMode throws on negative mode`() {
-        controller.setCookieBannerMode(-1)
-    }
-
-    // Regression: previously the inner try/catch swallowed exceptions from
-    // `setCookieBannerMode` (e.g. when the runtime is older than GeckoView 108
-    // and lacks the API), so the caller's React promise resolved as if the call
-    // had succeeded. The controller now re-throws so the JS-side promise rejects.
-
-    @Test(expected = RuntimeException::class)
-    fun `setCookieBannerMode re-throws when underlying call fails`() {
-        io.mockk.every {
-            contentBlocking.setCookieBannerMode(any())
-        } throws RuntimeException("setCookieBannerMode requires GeckoView 108+")
-        controller.setCookieBannerMode(2)
-    }
-
-    @Test
-    fun `setCookieBannerMode preserves the underlying exception message`() {
-        io.mockk.every {
-            contentBlocking.setCookieBannerMode(any())
-        } throws RuntimeException("api unsupported on this GeckoView build")
-        var thrown: Throwable? = null
-        try {
-            controller.setCookieBannerMode(1)
-        } catch (e: Throwable) {
-            thrown = e
-        }
-        assert(thrown is RuntimeException)
-        assert(thrown!!.message == "api unsupported on this GeckoView build") {
-            "Caller must see the underlying message; got '${thrown.message}'"
-        }
-    }
-
-    @Test
-    fun `setCookieBannerMode does not throw on success`() {
-        controller.setCookieBannerMode(0) // contentBlocking is relaxed=true → no throw
-        verify {
-            contentBlocking.setCookieBannerMode(
-                ContentBlocking.CookieBannerMode.COOKIE_BANNER_MODE_DISABLED
-            )
-        }
-    }
-
-    @Test
-    fun `can set ETP and cookie banner mode together`() {
-        controller.setEnhancedTrackingProtectionLevel(2)
-        controller.setCookieBannerMode(1)
-
-        verify {
-            contentBlocking.setEnhancedTrackingProtectionLevel(ContentBlocking.EtpLevel.STRICT)
-            contentBlocking.setCookieBannerMode(
-                ContentBlocking.CookieBannerMode.COOKIE_BANNER_MODE_REJECT
-            )
+    fun `invalid cookie banner modes remain rejected`() {
+        for (mode in listOf(-1, 3, 999)) {
+            org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+                controller.setCookieBannerMode(mode)
+            }
         }
     }
 }

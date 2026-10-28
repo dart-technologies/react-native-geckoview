@@ -24,9 +24,9 @@ const geckoModule = () =>
         configureSecurity: jest.Mock;
     };
 
-const mountGecko = (): React.RefObject<GeckoViewRef | null> => {
+const mountGecko = async (): Promise<React.RefObject<GeckoViewRef | null>> => {
     const ref = createRef<GeckoViewRef>();
-    render(<GeckoView ref={ref} source={{ uri: fixtures.urls.example }} />);
+    await render(<GeckoView ref={ref} source={{ uri: fixtures.urls.example }} />);
     return ref;
 };
 
@@ -63,8 +63,8 @@ describe('Security hardening (JS surface)', () => {
     });
 
     describe('loadUrl scheme forwarding', () => {
-        it('forwards http URLs verbatim to the native module', () => {
-            const ref = mountGecko();
+        it('forwards http URLs verbatim to the native module', async () => {
+            const ref = await mountGecko();
             ref.current!.loadUrl('http://example.com/page');
             expect(geckoModule().loadUrl).toHaveBeenCalledWith(
                 expect.any(String),
@@ -72,8 +72,8 @@ describe('Security hardening (JS surface)', () => {
             );
         });
 
-        it('forwards https URLs verbatim to the native module', () => {
-            const ref = mountGecko();
+        it('forwards https URLs verbatim to the native module', async () => {
+            const ref = await mountGecko();
             ref.current!.loadUrl('https://example.com/page');
             expect(geckoModule().loadUrl).toHaveBeenCalledWith(
                 expect.any(String),
@@ -81,18 +81,18 @@ describe('Security hardening (JS surface)', () => {
             );
         });
 
-        it('forwards about:blank verbatim to the native module', () => {
-            const ref = mountGecko();
+        it('forwards about:blank verbatim to the native module', async () => {
+            const ref = await mountGecko();
             ref.current!.loadUrl('about:blank');
             expect(geckoModule().loadUrl).toHaveBeenCalledWith(expect.any(String), 'about:blank');
         });
 
-        it('still forwards javascript: URLs to native (native rejects them)', () => {
+        it('still forwards javascript: URLs to native (native rejects them)', async () => {
             // The TS binding is intentionally permissive — the contract is that
             // the NATIVE module enforces the allowlist. This test documents that
             // the JS side does NOT pre-filter, so a future refactor that moves
             // enforcement to JS must keep the native filter in place too.
-            const ref = mountGecko();
+            const ref = await mountGecko();
             ref.current!.loadUrl('javascript:alert(1)');
             expect(geckoModule().loadUrl).toHaveBeenCalledWith(
                 expect.any(String),
@@ -102,15 +102,15 @@ describe('Security hardening (JS surface)', () => {
     });
 
     describe('setEnhancedTrackingProtectionLevel promise', () => {
-        it('returns a Promise', () => {
-            const ref = mountGecko();
+        it('returns a Promise', async () => {
+            const ref = await mountGecko();
             const result = ref.current!.setEnhancedTrackingProtectionLevel(2);
             expect(result).toBeInstanceOf(Promise);
         });
 
         it('forwards the level argument unchanged', async () => {
             geckoModule().setEnhancedTrackingProtectionLevel.mockResolvedValueOnce(undefined);
-            const ref = mountGecko();
+            const ref = await mountGecko();
             await act(async () => {
                 await ref.current!.setEnhancedTrackingProtectionLevel(1);
             });
@@ -121,7 +121,7 @@ describe('Security hardening (JS surface)', () => {
             geckoModule().setEnhancedTrackingProtectionLevel.mockRejectedValueOnce(
                 new Error('INVALID_ETP_LEVEL')
             );
-            const ref = mountGecko();
+            const ref = await mountGecko();
             await expect(ref.current!.setEnhancedTrackingProtectionLevel(2)).rejects.toThrow(
                 'INVALID_ETP_LEVEL'
             );
@@ -129,8 +129,8 @@ describe('Security hardening (JS surface)', () => {
     });
 
     describe('setCookieBannerMode promise', () => {
-        it('returns a Promise', () => {
-            const ref = mountGecko();
+        it('returns a Promise', async () => {
+            const ref = await mountGecko();
             const result = ref.current!.setCookieBannerMode(1);
             expect(result).toBeInstanceOf(Promise);
         });
@@ -139,7 +139,7 @@ describe('Security hardening (JS surface)', () => {
             geckoModule().setCookieBannerMode.mockRejectedValueOnce(
                 new Error('INVALID_COOKIE_BANNER_MODE')
             );
-            const ref = mountGecko();
+            const ref = await mountGecko();
             await expect(ref.current!.setCookieBannerMode(0)).rejects.toThrow(
                 'INVALID_COOKIE_BANNER_MODE'
             );
@@ -156,7 +156,7 @@ describe('Security hardening (JS surface)', () => {
                     { code: 'COOKIE_BANNER_SET_FAILED' }
                 )
             );
-            const ref = mountGecko();
+            const ref = await mountGecko();
             await expect(ref.current!.setCookieBannerMode(2)).rejects.toThrow(
                 /requires GeckoView 108\+/
             );
@@ -164,7 +164,7 @@ describe('Security hardening (JS surface)', () => {
 
         it('forwards the mode argument unchanged for each valid value', async () => {
             geckoModule().setCookieBannerMode.mockResolvedValue(undefined);
-            const ref = mountGecko();
+            const ref = await mountGecko();
             for (const mode of [0, 1, 2] as const) {
                 await act(async () => {
                     await ref.current!.setCookieBannerMode(mode);
@@ -182,7 +182,7 @@ describe('Security hardening (JS surface)', () => {
                     code: 'INVALID_ASSET_PATH',
                 })
             );
-            const ref = mountGecko();
+            const ref = await mountGecko();
             await expect(ref.current!.installWebExtension('../../evil')).rejects.toThrow(
                 'Unsafe extension asset path'
             );
@@ -190,7 +190,7 @@ describe('Security hardening (JS surface)', () => {
 
         it('resolves for a valid bundled extension name', async () => {
             geckoModule().installWebExtension.mockResolvedValueOnce(undefined);
-            const ref = mountGecko();
+            const ref = await mountGecko();
             await expect(ref.current!.installWebExtension('spatial_navigation')).resolves.toBeUndefined();
             expect(geckoModule().installWebExtension).toHaveBeenCalledWith('spatial_navigation');
         });
@@ -199,7 +199,7 @@ describe('Security hardening (JS surface)', () => {
     describe('evaluateJavaScript contract', () => {
         it('forwards the raw code string to the trusted bridge', async () => {
             geckoModule().evaluateJavaScript.mockResolvedValueOnce('"ok"');
-            const ref = mountGecko();
+            const ref = await mountGecko();
             const payload = '"); stealCookies(); eval("';
             await act(async () => {
                 await ref.current!.evaluateJavaScript(payload);
@@ -212,7 +212,7 @@ describe('Security hardening (JS surface)', () => {
 
         it('propagates EVAL_ERROR rejection from native', async () => {
             geckoModule().evaluateJavaScript.mockRejectedValueOnce(new Error('syntax error'));
-            const ref = mountGecko();
+            const ref = await mountGecko();
             await expect(ref.current!.evaluateJavaScript('not valid JS {{{')).rejects.toThrow(
                 'syntax error'
             );

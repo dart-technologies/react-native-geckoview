@@ -46,4 +46,14 @@ class WebExtensionBridgeAssetsTest {
         // Pin the exact constant so renames on either side break the build.
         assertEquals("react_native_geckoview_bridge", WebExtensionController.INTERNAL_BRIDGE_ASSET_PATH)
     }
+    @Test
+    fun `trusted content bridge declares GeckoView native messaging permissions`() {
+        val manifest = org.json.JSONObject(java.io.File("src/main/assets/${WebExtensionController.INTERNAL_BRIDGE_ASSET_PATH}/manifest.json").readText())
+        val permissions = manifest.getJSONArray("permissions")
+        val declared = (0 until permissions.length()).map { permissions.getString(it) }.toSet()
+        assertTrue(declared.containsAll(setOf("nativeMessaging", "nativeMessagingFromContent", "geckoViewAddons")))
+        assertEquals(WebExtensionController.INTERNAL_BRIDGE_EXTENSION_ID, manifest.getJSONObject("browser_specific_settings").getJSONObject("gecko").getString("id"))
+        assertEquals(false, manifest.getJSONArray("content_scripts").getJSONObject(0).getBoolean("all_frames"))
+    }
+
 }
