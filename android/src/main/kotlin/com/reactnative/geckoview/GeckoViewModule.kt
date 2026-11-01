@@ -143,54 +143,71 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
     @ReactMethod
     fun resolvePrompt(promptId: String, confirm: Boolean, text: String?, username: String?, password: String?) {
         cancelTimeout(promptId)
-        pendingPrompts.remove(promptId)?.let { pending ->
+        val pending = pendingPrompts.remove(promptId) ?: return
+        val response = try {
+            promptResponse(pending.prompt, confirm, text, username, password)
+        } catch (e: Exception) {
+            // The entry and its timeout are already gone, so nothing else will
+            // answer this prompt: dismiss it rather than leave the page blocked.
+            GeckoLog.e(TAG, "Error resolving prompt; dismissing it", e)
             try {
-                val response = when (val prompt = pending.prompt) {
-                    is GeckoSession.PromptDelegate.AlertPrompt -> {
-                        val method = prompt.javaClass.getDeclaredMethod("confirm")
-                        method.isAccessible = true
-                        method.invoke(prompt) as? GeckoSession.PromptDelegate.PromptResponse
-                    }
-                    is GeckoSession.PromptDelegate.ButtonPrompt -> {
-                        val method = prompt.javaClass.getDeclaredMethod("confirm", GeckoSession.PromptDelegate.ButtonPrompt.Type::class.java)
-                        method.isAccessible = true
-                        if (confirm) method.invoke(prompt, GeckoSession.PromptDelegate.ButtonPrompt.Type.POSITIVE) as? GeckoSession.PromptDelegate.PromptResponse
-                        else method.invoke(prompt, GeckoSession.PromptDelegate.ButtonPrompt.Type.NEGATIVE) as? GeckoSession.PromptDelegate.PromptResponse
-                    }
-                    is GeckoSession.PromptDelegate.TextPrompt -> {
-                        if (confirm && text != null) {
-                            val method = prompt.javaClass.getDeclaredMethod("confirm", String::class.java)
-                            method.isAccessible = true
-                            method.invoke(prompt, text) as? GeckoSession.PromptDelegate.PromptResponse
-                        } else {
-                            val method = prompt.javaClass.getDeclaredMethod("dismiss")
-                            method.isAccessible = true
-                            method.invoke(prompt) as? GeckoSession.PromptDelegate.PromptResponse
-                        }
-                    }
-                    is PopupPromptWrapper -> {
-                        prompt.respond(confirm)
-                    }
-                    is BeforeUnloadPromptWrapper -> {
-                        prompt.confirm(confirm)
-                    }
-                    is AuthPromptWrapper -> {
-                        // `password` is the explicit channel; fall back to `text`
-                        // for older callers that passed the password positionally.
-                        val pw = password ?: text
-                        if (confirm && username != null && pw != null) {
-                            prompt.confirm(username, pw)
-                        } else {
-                            prompt.dismiss()
-                        }
-                    }
-                    else -> null
-                }
-                response?.let { pending.result.complete(it) }
-            } catch (e: Exception) {
-                GeckoLog.e(TAG, "Error resolving prompt", e)
+                dismissResponse(pending.prompt)
+            } catch (dismissError: Exception) {
+                GeckoLog.e(TAG, "Error dismissing prompt", dismissError)
+                null
             }
         }
+        if (response == null) {
+            GeckoLog.w(TAG, "Unhandled prompt type; cannot resolve")
+            return
+        }
+        try {
+            pending.result.complete(response)
+        } catch (e: Exception) {
+            GeckoLog.e(TAG, "Error completing prompt", e)
+        }
+    }
+
+    /** The GeckoView 159 response for a JS decision on a pending prompt. */
+    private fun promptResponse(
+        prompt: Any,
+        confirm: Boolean,
+        text: String?,
+        username: String?,
+        password: String?,
+    ): GeckoSession.PromptDelegate.PromptResponse? = when (prompt) {
+        // AlertPrompt declares no confirm(); an alert is acknowledged by dismissing it.
+        is GeckoSession.PromptDelegate.AlertPrompt -> prompt.dismiss()
+        is GeckoSession.PromptDelegate.ButtonPrompt -> prompt.confirm(
+            if (confirm) GeckoSession.PromptDelegate.ButtonPrompt.Type.POSITIVE
+            else GeckoSession.PromptDelegate.ButtonPrompt.Type.NEGATIVE
+        )
+        is GeckoSession.PromptDelegate.TextPrompt ->
+            if (confirm && text != null) prompt.confirm(text) else prompt.dismiss()
+        is PopupPromptWrapper -> prompt.respond(confirm)
+        is BeforeUnloadPromptWrapper -> prompt.confirm(confirm)
+        is AuthPromptWrapper -> {
+            // `password` is the explicit channel; fall back to `text`
+            // for older callers that passed the password positionally.
+            val pw = password ?: text
+            if (confirm && username != null && pw != null) {
+                prompt.confirm(username, pw)
+            } else {
+                prompt.dismiss()
+            }
+        }
+        else -> null
+    }
+
+    /** The "cancel" answer for a pending prompt, used on timeout and when resolving fails. */
+    private fun dismissResponse(prompt: Any): GeckoSession.PromptDelegate.PromptResponse? = when (prompt) {
+        is PopupPromptWrapper -> prompt.respond(false)
+        is BeforeUnloadPromptWrapper -> prompt.confirm(false)
+        is AuthPromptWrapper -> prompt.dismiss()
+        // Alert/Button/Text prompts are stored unwrapped (see
+        // GeckoViewPromptDelegate.handlePrompt); dismiss() lives on BasePrompt.
+        is GeckoSession.PromptDelegate.BasePrompt -> prompt.dismiss()
+        else -> null
     }
 
     @ReactMethod
@@ -455,21 +472,8 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             pendingPrompts.remove(promptId)?.let {
                 GeckoLog.d(TAG, "Prompt timed out; dropping")
                 try {
-                    val response = when (val prompt = it.prompt) {
-                        is PopupPromptWrapper -> prompt.respond(false)
-                        is BeforeUnloadPromptWrapper -> prompt.confirm(false)
-                        is AuthPromptWrapper -> prompt.dismiss()
-                        // Alert/Button/Text prompts are stored unwrapped (see
-                        // GeckoViewPromptDelegate.handlePrompt). They previously
-                        // fell through to `else -> null`, leaving the GeckoResult
-                        // uncompleted and the UI prompt hanging until the page
-                        // navigated.
-                        is GeckoSession.PromptDelegate.BasePrompt -> prompt.dismiss()
-                        else -> {
-                            GeckoLog.w(TAG, "Unhandled prompt type on timeout")
-                            null
-                        }
-                    }
+                    val response = dismissResponse(it.prompt)
+                    if (response == null) GeckoLog.w(TAG, "Unhandled prompt type on timeout")
                     response?.let { r -> it.result.complete(r) }
                 } catch (e: Throwable) {
                     GeckoLog.w(TAG, "Error dismissing timed-out prompt", e)

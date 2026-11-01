@@ -701,67 +701,108 @@ class GeckoViewModuleTest {
         verify(exactly = 0) { wrapper.confirm(any(), any()) }
     }
 
-    // resolvePrompt routes Alert/Button/Text prompts through reflective
-    // confirm()/dismiss() lookups on the real GeckoView prompt class. With a
-    // mocked prompt the declared method isn't reachable, so the lookup throws
-    // and the outer catch swallows it — exercising the branch entry + catch
-    // (L135-156, L177-178) without a live prompt instance.
+    // resolvePrompt uses the typed GeckoView 159 prompt API (self-review M4).
+    // The reflective lookups it replaced all failed on 159: AlertPrompt declares
+    // no confirm(), ButtonPrompt.confirm takes an int Type, and dismiss() lives
+    // on BasePrompt. The GeckoResult was never completed, so the page stayed
+    // blocked on the prompt until it navigated.
 
     @Test
-    fun `resolvePrompt swallows reflection failure on a mocked AlertPrompt`() {
+    fun `resolvePrompt acknowledges an AlertPrompt by dismissing it`() {
+        val response: GeckoSession.PromptDelegate.PromptResponse = mockk(relaxed = true)
         val prompt: GeckoSession.PromptDelegate.AlertPrompt = mockk(relaxed = true)
+        every { prompt.dismiss() } returns response
         val result: GeckoResult<Any> = mockk(relaxed = true)
 
         val module = newModule()
         module.storePendingPrompt("p-alert", prompt, result)
-        // Must not throw; the GeckoResult is left uncompleted because the
-        // reflective confirm() lookup fails on the mock.
         module.resolvePrompt("p-alert", confirm = true, text = null, username = null, password = null)
 
-        verify(exactly = 0) { result.complete(any()) }
+        verify(exactly = 1) { result.complete(response) }
     }
 
     @Test
-    fun `resolvePrompt swallows reflection failure on a mocked ButtonPrompt for both confirm states`() {
+    fun `resolvePrompt answers a ButtonPrompt with the POSITIVE or NEGATIVE type`() {
+        val positive: GeckoSession.PromptDelegate.PromptResponse = mockk(relaxed = true)
+        val negative: GeckoSession.PromptDelegate.PromptResponse = mockk(relaxed = true)
+        val okPrompt: GeckoSession.PromptDelegate.ButtonPrompt = mockk(relaxed = true)
+        val cancelPrompt: GeckoSession.PromptDelegate.ButtonPrompt = mockk(relaxed = true)
+        every { okPrompt.confirm(GeckoSession.PromptDelegate.ButtonPrompt.Type.POSITIVE) } returns positive
+        every { cancelPrompt.confirm(GeckoSession.PromptDelegate.ButtonPrompt.Type.NEGATIVE) } returns negative
+        val okResult: GeckoResult<Any> = mockk(relaxed = true)
+        val cancelResult: GeckoResult<Any> = mockk(relaxed = true)
+
         val module = newModule()
-        val resultPos: GeckoResult<Any> = mockk(relaxed = true)
-        val resultNeg: GeckoResult<Any> = mockk(relaxed = true)
+        module.storePendingPrompt("p-btn-ok", okPrompt, okResult)
+        module.storePendingPrompt("p-btn-cancel", cancelPrompt, cancelResult)
+        module.resolvePrompt("p-btn-ok", confirm = true, text = null, username = null, password = null)
+        module.resolvePrompt("p-btn-cancel", confirm = false, text = null, username = null, password = null)
 
-        module.storePendingPrompt("p-btn-pos", mockk<GeckoSession.PromptDelegate.ButtonPrompt>(relaxed = true), resultPos)
-        module.resolvePrompt("p-btn-pos", confirm = true, text = null, username = null, password = null)
-
-        module.storePendingPrompt("p-btn-neg", mockk<GeckoSession.PromptDelegate.ButtonPrompt>(relaxed = true), resultNeg)
-        module.resolvePrompt("p-btn-neg", confirm = false, text = null, username = null, password = null)
-
-        verify(exactly = 0) { resultPos.complete(any()) }
-        verify(exactly = 0) { resultNeg.complete(any()) }
+        verify(exactly = 1) { okResult.complete(positive) }
+        verify(exactly = 1) { cancelResult.complete(negative) }
     }
 
     @Test
-    fun `resolvePrompt confirms a TextPrompt via the reflective confirm(String) path`() {
-        // MockK generates an override for the open confirm(String) on the
-        // TextPrompt subclass, so the reflective lookup + invoke succeeds and the
-        // relaxed PromptResponse is completed. Exercises L147-151 + L176.
-        val module = newModule()
+    fun `resolvePrompt confirms a TextPrompt with the entered text`() {
+        val response: GeckoSession.PromptDelegate.PromptResponse = mockk(relaxed = true)
+        val prompt: GeckoSession.PromptDelegate.TextPrompt = mockk(relaxed = true)
+        every { prompt.confirm("answer") } returns response
         val result: GeckoResult<Any> = mockk(relaxed = true)
 
-        module.storePendingPrompt("p-text-c", mockk<GeckoSession.PromptDelegate.TextPrompt>(relaxed = true), result)
+        val module = newModule()
+        module.storePendingPrompt("p-text-c", prompt, result)
         module.resolvePrompt("p-text-c", confirm = true, text = "answer", username = null, password = null)
 
-        verify(exactly = 1) { result.complete(any()) }
+        verify(exactly = 1) { result.complete(response) }
     }
 
     @Test
-    fun `resolvePrompt swallows reflection failure on a TextPrompt dismiss path`() {
-        // confirm=false routes to the reflective dismiss() lookup, which is not
-        // reachable on the mock -> the outer catch swallows it (L152-156, L177).
-        val module = newModule()
+    fun `resolvePrompt dismisses a cancelled TextPrompt`() {
+        val response: GeckoSession.PromptDelegate.PromptResponse = mockk(relaxed = true)
+        val prompt: GeckoSession.PromptDelegate.TextPrompt = mockk(relaxed = true)
+        every { prompt.dismiss() } returns response
         val result: GeckoResult<Any> = mockk(relaxed = true)
 
-        module.storePendingPrompt("p-text-d", mockk<GeckoSession.PromptDelegate.TextPrompt>(relaxed = true), result)
+        val module = newModule()
+        module.storePendingPrompt("p-text-d", prompt, result)
         module.resolvePrompt("p-text-d", confirm = false, text = null, username = null, password = null)
 
-        verify(exactly = 0) { result.complete(any()) }
+        verify(exactly = 1) { result.complete(response) }
+        verify(exactly = 0) { prompt.confirm(any<String>()) }
+    }
+
+    @Test
+    fun `resolvePrompt dismisses the prompt when building the answer throws`() {
+        // The pending entry and its timeout are gone by then, so a failure must
+        // still complete the GeckoResult or the page blocks until it navigates.
+        val dismissed: GeckoSession.PromptDelegate.PromptResponse = mockk(relaxed = true)
+        val prompt: GeckoSession.PromptDelegate.ButtonPrompt = mockk(relaxed = true)
+        every { prompt.confirm(any<Int>()) } throws IllegalStateException("prompt already answered")
+        every { prompt.dismiss() } returns dismissed
+        val result: GeckoResult<Any> = mockk(relaxed = true)
+
+        val module = newModule()
+        module.storePendingPrompt("p-btn-fail", prompt, result)
+        module.resolvePrompt("p-btn-fail", confirm = true, text = null, username = null, password = null)
+
+        verify(exactly = 1) { result.complete(dismissed) }
+    }
+
+    @Test
+    fun `a resolved prompt is completed once and its timeout never fires`() {
+        val response: GeckoSession.PromptDelegate.PromptResponse = mockk(relaxed = true)
+        val prompt: GeckoSession.PromptDelegate.AlertPrompt = mockk(relaxed = true)
+        every { prompt.dismiss() } returns response
+        val result: GeckoResult<Any> = mockk(relaxed = true)
+
+        val module = newModule()
+        module.storePendingPrompt("p-alert-once", prompt, result)
+        module.resolvePrompt("p-alert-once", confirm = true, text = null, username = null, password = null)
+        Shadows.shadowOf(android.os.Looper.getMainLooper())
+            .idleFor(java.time.Duration.ofMillis(PROMPT_TIMEOUT_BUFFER_MS))
+
+        verify(exactly = 1) { result.complete(any()) }
+        verify(exactly = 1) { prompt.dismiss() }
     }
 
     @Test
