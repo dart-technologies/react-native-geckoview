@@ -4,7 +4,9 @@ import android.app.Activity
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import com.facebook.react.uimanager.ThemedReactContext
+import io.mockk.Runs
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
 import io.mockk.verify
 import android.content.Intent
@@ -26,9 +28,11 @@ import org.robolectric.annotation.Config
 /**
  * Tests for [GeckoViewNavigationDelegate].
  *
- * Play Store dialog paths are not covered here because `AlertDialog.Builder`
- * requires a real activity to instantiate; those are verified via device
- * integration tests. `WebRequestError` is final with final fields, so
+ * The confirmation dialogs (intent, Play Store, maps) are not driven to a
+ * click here because `AlertDialog.Builder` requires a real activity to
+ * instantiate; tests assert the dialog is requested on the UI thread and that
+ * nothing launches without it. Clicks are verified via device integration
+ * tests. `WebRequestError` is final with final fields, so
  * `onLoadError` is covered structurally but the category/message mapping is
  * tested through integration.
  */
@@ -89,25 +93,28 @@ class GeckoViewNavigationDelegateTest {
     }
 
     @Test
-    fun `onLocationChange handles maps google com url`() {
+    fun `onLocationChange asks before opening a maps google com url`() {
         navigationDelegate.onLocationChange(
             session, "https://maps.google.com/maps?q=37.7749,-122.4194", mutableListOf(), false
         )
-        verify { activity.startActivity(any()) }
+        verify(exactly = 1) { activity.runOnUiThread(any()) }
+        verify(exactly = 0) { activity.startActivity(any()) }
     }
 
     @Test
-    fun `onLocationChange handles geo scheme url`() {
+    fun `onLocationChange asks before opening a geo scheme url`() {
         navigationDelegate.onLocationChange(session, "geo:37.7749,-122.4194", mutableListOf(), false)
-        verify { activity.startActivity(any()) }
+        verify(exactly = 1) { activity.runOnUiThread(any()) }
+        verify(exactly = 0) { activity.startActivity(any()) }
     }
 
     @Test
-    fun `onLocationChange handles maps app goo gl url`() {
+    fun `onLocationChange asks before opening a maps app goo gl url`() {
         navigationDelegate.onLocationChange(
             session, "https://maps.app.goo.gl/abc123", mutableListOf(), false
         )
-        verify { activity.startActivity(any()) }
+        verify(exactly = 1) { activity.runOnUiThread(any()) }
+        verify(exactly = 0) { activity.startActivity(any()) }
     }
 
     @Test
@@ -289,14 +296,27 @@ class GeckoViewNavigationDelegateTest {
     }
 
     @Test
-    fun `handleMapsIntent swallows a throwing startActivity`() {
-        every { activity.startActivity(any()) } throws RuntimeException("no maps app")
+    fun `top-frame geo navigation is denied and only launches maps after confirmation`() {
+        // geo: used to start the maps app straight from onLoadRequest, with no
+        // dialog and no user gesture, unlike intent: and market: (review L2).
+        // Hold the UI-thread dialog so nothing has been confirmed yet.
+        every { activity.runOnUiThread(any()) } just Runs
 
-        // The maps catch (L250-251) must absorb the failure rather than crashing
-        // the location-change callback.
+        assertEquals(AllowOrDeny.DENY, loadResult("geo:37.7749,-122.4194"))
+
+        verify(exactly = 1) { activity.runOnUiThread(any()) }
+        verify(exactly = 0) { activity.startActivity(any()) }
+        verify(exactly = 0) { context.startActivity(any()) }
+    }
+
+    @Test
+    fun `maps confirmation survives a dialog that cannot be shown`() {
+        // The mocked Activity can't host an AlertDialog; the builder failure is
+        // caught inside the UI-thread runnable and nothing launches.
         navigationDelegate.onLocationChange(session, "geo:37.7749,-122.4194", mutableListOf(), false)
 
-        verify { activity.startActivity(any()) }
+        verify(exactly = 1) { activity.runOnUiThread(any()) }
+        verify(exactly = 0) { activity.startActivity(any()) }
     }
 
     // ========== onSubframeLoadRequest — stricter gate ==========
@@ -500,6 +520,7 @@ class GeckoViewNavigationDelegateTest {
             mutableListOf(),
             false,
         )
+        verify(exactly = 0) { activity.runOnUiThread(any()) }
         verify(exactly = 0) { activity.startActivity(any()) }
     }
 

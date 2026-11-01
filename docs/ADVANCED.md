@@ -218,6 +218,8 @@ that:
 - Route `intent://` top-frame navigations to the sanitized dialog flow
   (subframes can never trigger `intent://` — attacker frames can't
   silently launch external apps).
+- Deny top-frame `market:` and `geo:` navigations and ask before opening the
+  Play Store or a maps app; Play Store and maps web URLs ask the same way.
 
 No hook is currently exposed to override this from JS. If you need a
 custom navigation policy, fork the library or file an issue.

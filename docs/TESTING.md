@@ -107,7 +107,7 @@ describe('Feature Tests', () => {
 | `GeckoViewContentDelegateTest.kt` | Title / focus-exit events |
 | `GeckoViewManagerImplTest.kt` | View manager prop plumbing; teardown during playback abandons audio focus |
 | `GeckoViewModuleTest.kt` | **`isSafeLoadUrl` + `jsonEncodeString` adversarial matrix (security guard)**; per-session snapshot cleanup; `captureSnapshot` branch coverage and UI-thread capture; ref methods never create sessions; typed `resolvePrompt` + prompt-timeout coverage for Alert/Button/Text |
-| `GeckoViewNavigationDelegateTest.kt` | **`onLoadRequest` scheme gate + `sanitizeParsedIntent` + Play Store `appId` + host-spoof guards + `onNewSession` popup filter (security guard)** |
+| `GeckoViewNavigationDelegateTest.kt` | **`onLoadRequest` scheme gate + `sanitizeParsedIntent` + Play Store `appId` + host-spoof guards + `geo:`/maps launches need confirmation + `onNewSession` popup filter (security guard)** |
 | `GeckoViewPermissionDelegateTest.kt` | Security-first DRM/autoplay prompts + explicit opt-in paths |
 | `GeckoViewProgressDelegateTest.kt` | Progress events |
 | `GeckoViewPromptDelegateTest.kt` | Alert/popup/auth; eval-looking alerts stay page alerts |

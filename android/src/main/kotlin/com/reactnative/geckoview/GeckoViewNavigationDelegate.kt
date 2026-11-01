@@ -163,25 +163,11 @@ class GeckoViewNavigationDelegate(
             }
             if (context.packageManager.queryIntentActivities(intent, 0).isEmpty()) return
 
-            val activity = context.currentActivity ?: return
-            activity.runOnUiThread {
-                try {
-                    AlertDialog.Builder(activity)
-                        .setTitle("Open External App?")
-                        .setMessage("Allow opening ${intent.`package` ?: "external app"}?")
-                        .setPositiveButton("Open") { _, _ ->
-                            try {
-                                context.startActivity(intent)
-                            } catch (e: Throwable) {
-                                GeckoLog.e(TAG, "Failed to start intent", e)
-                            }
-                        }
-                        .setNegativeButton("Cancel", null)
-                        .show()
-                } catch (e: Throwable) {
-                    GeckoLog.e(TAG, "Failed to show intent dialog", e)
-                }
-            }
+            confirmExternalLaunch(
+                title = "Open External App?",
+                message = "Allow opening ${intent.`package` ?: "external app"}?",
+                intent = intent,
+            )
         } catch (e: Exception) {
             GeckoLog.e(TAG, "Error handling intent scheme", e)
         }
@@ -221,34 +207,46 @@ class GeckoViewNavigationDelegate(
             return
         }
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$appId"))
+        confirmExternalLaunch(
+            title = "Open Play Store?",
+            message = "Open $appId in Play Store?",
+            intent = intent,
+        )
+    }
+
+    /**
+     * `geo:` navigations and maps-host URLs go through the same confirmation as
+     * `intent:` and `market:`. They used to start the maps app directly, so a
+     * page could launch it with no user gesture and no prompt.
+     */
+    private fun handleMapsIntent(uri: Uri) {
+        confirmExternalLaunch(
+            title = "Open Maps?",
+            message = "Open this location in a maps app?",
+            intent = Intent(Intent.ACTION_VIEW, uri),
+        )
+    }
+
+    /** Every page-initiated launch of another app waits for the user to confirm. */
+    private fun confirmExternalLaunch(title: String, message: String, intent: Intent) {
         val activity = context.currentActivity ?: return
         activity.runOnUiThread {
             try {
                 AlertDialog.Builder(activity)
-                    .setTitle("Open Play Store?")
-                    .setMessage("Open $appId in Play Store?")
+                    .setTitle(title)
+                    .setMessage(message)
                     .setPositiveButton("Open") { _, _ ->
                         try {
-                            context.startActivity(intent)
+                            activity.startActivity(intent)
                         } catch (e: Throwable) {
-                            GeckoLog.e(TAG, "Failed to open Play Store", e)
+                            GeckoLog.e(TAG, "Failed to start external app", e)
                         }
                     }
                     .setNegativeButton("Cancel", null)
                     .show()
             } catch (e: Throwable) {
-                GeckoLog.e(TAG, "Failed to show Play Store dialog", e)
+                GeckoLog.e(TAG, "Failed to show external app dialog", e)
             }
-        }
-    }
-
-    private fun handleMapsIntent(uri: Uri) {
-        try {
-            val intent = Intent(Intent.ACTION_VIEW, uri)
-            val activity = context.currentActivity ?: return
-            activity.startActivity(intent)
-        } catch (e: Throwable) {
-            GeckoLog.e(TAG, "Failed to open maps intent", e)
         }
     }
 
