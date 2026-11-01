@@ -34,10 +34,12 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
         Collections.synchronizedMap(mutableMapOf())
     private val timeoutHandler = Handler(Looper.getMainLooper())
     // A capture must run on the UI thread; its PNG encoding and file I/O must not.
-    internal var snapshotExecutor: java.util.concurrent.Executor =
-        java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
-            Thread(runnable, "GeckoViewSnapshot").apply { isDaemon = true }
-        }
+    // One save runs and one waits, so at most MAX_PENDING_SNAPSHOTS captured
+    // bitmaps are held; a capture beyond that rejects with SNAPSHOT_BUSY.
+    internal var snapshotExecutor: java.util.concurrent.Executor = java.util.concurrent.ThreadPoolExecutor(
+        1, 1, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+        java.util.concurrent.ArrayBlockingQueue<Runnable>(MAX_PENDING_SNAPSHOTS - 1),
+    ) { runnable -> Thread(runnable, "GeckoViewSnapshot").apply { isDaemon = true } }
     private val timeoutRunnables: MutableMap<String, Runnable> =
         Collections.synchronizedMap(mutableMapOf())
     // Snapshots are tracked per-session so closeSession only removes its own
@@ -45,6 +47,12 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
     // session's snapshots whenever any one was closed.
     private val snapshotsBySession: MutableMap<String, MutableSet<java.io.File>> = mutableMapOf()
     private val snapshotsLock = Any()
+
+    /** A save in flight; cleanup of its session cancels it. Guarded by [snapshotsLock]. */
+    private class PendingSnapshot(val sessionKey: String) {
+        var cancelled = false
+    }
+    private val pendingSnapshots: MutableSet<PendingSnapshot> = mutableSetOf()
 
     data class PromptInfo(val prompt: Any, val result: GeckoResult<Any>, val createdAt: Long = System.currentTimeMillis())
 
@@ -363,6 +371,10 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             )
             return
         }
+        if (synchronized(snapshotsLock) { pendingSnapshots.size } >= MAX_PENDING_SNAPSHOTS) {
+            promise.reject(SNAPSHOT_BUSY, SNAPSHOT_BUSY_MESSAGE)
+            return
+        }
 
         view.capturePixels().then(
             { bitmap ->
@@ -380,11 +392,18 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                 }
                 // This continuation runs on the UI thread; encoding a full-screen
                 // PNG and writing it would block input and rendering there.
+                val pending = PendingSnapshot(sessionKey)
+                synchronized(snapshotsLock) { pendingSnapshots.add(pending) }
                 try {
-                    snapshotExecutor.execute { saveSnapshot(bitmap, sessionKey, promise) }
+                    snapshotExecutor.execute { saveSnapshot(bitmap, pending, promise) }
                 } catch (e: Exception) {
+                    synchronized(snapshotsLock) { pendingSnapshots.remove(pending) }
                     bitmap.recycle()
-                    promise.reject("SNAPSHOT_ERROR", "Error saving snapshot: ${e.message}")
+                    if (e is java.util.concurrent.RejectedExecutionException) {
+                        promise.reject(SNAPSHOT_BUSY, SNAPSHOT_BUSY_MESSAGE)
+                    } else {
+                        promise.reject("SNAPSHOT_ERROR", "Error saving snapshot: ${e.message}")
+                    }
                 }
                 GeckoResult.fromValue(null)
             },
@@ -402,10 +421,15 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
     }
 
     /** Encodes and stores a captured bitmap on [snapshotExecutor], then settles the promise. */
-    private fun saveSnapshot(bitmap: android.graphics.Bitmap, sessionKey: String, promise: Promise) {
+    private fun saveSnapshot(bitmap: android.graphics.Bitmap, pending: PendingSnapshot, promise: Promise) {
         // `try { ... } finally { recycle }`: every exit path must release the
         // native bitmap pixels promptly rather than waiting for GC.
+        var file: java.io.File? = null
         try {
+            if (synchronized(snapshotsLock) { pending.cancelled }) {
+                promise.reject("VIEW_NOT_FOUND", SNAPSHOT_SESSION_CLOSED_MESSAGE)
+                return
+            }
             // `noBackupFilesDir` keeps the PNG out of Android auto-backup,
             // so page screenshots don't sync to cloud even if the host app
             // enables `allowBackup`. `deleteOnExit` + TTL eviction limits
@@ -413,18 +437,33 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             val dir = java.io.File(reactApplicationContext.noBackupFilesDir, "geckoview_snapshots")
             dir.mkdirs()
             evictStaleSnapshots(dir)
-            val file = java.io.File.createTempFile("snapshot", ".png", dir)
-            file.deleteOnExit()
-            java.io.FileOutputStream(file).use { stream ->
+            val saved = java.io.File.createTempFile("snapshot", ".png", dir)
+            file = saved
+            saved.deleteOnExit()
+            java.io.FileOutputStream(saved).use { stream ->
                 bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
             }
-            synchronized(snapshotsLock) {
-                snapshotsBySession.getOrPut(sessionKey) { mutableSetOf() }.add(file)
+            // Registration and session cleanup share the lock, so a file is
+            // either registered before cleanup deletes it, or never registered.
+            val registered = synchronized(snapshotsLock) {
+                if (pending.cancelled) {
+                    false
+                } else {
+                    snapshotsBySession.getOrPut(pending.sessionKey) { mutableSetOf() }.add(saved)
+                    true
+                }
             }
-            promise.resolve(file.absolutePath)
+            if (registered) {
+                promise.resolve(saved.absolutePath)
+            } else {
+                saved.delete()
+                promise.reject("VIEW_NOT_FOUND", SNAPSHOT_SESSION_CLOSED_MESSAGE)
+            }
         } catch (e: Exception) {
+            file?.delete()
             promise.reject("SNAPSHOT_ERROR", "Error saving snapshot: ${e.message}")
         } finally {
+            synchronized(snapshotsLock) { pendingSnapshots.remove(pending) }
             bitmap.recycle()
         }
     }
@@ -548,6 +587,8 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     private fun cleanupSnapshotsForSession(sessionKey: String) {
         synchronized(snapshotsLock) {
+            // A save still in flight for this session must not register its file afterwards.
+            pendingSnapshots.forEach { if (it.sessionKey == sessionKey) it.cancelled = true }
             val set = snapshotsBySession.remove(sessionKey) ?: return
             for (f in set) {
                 try { f.delete() } catch (_: Throwable) {}
@@ -602,6 +643,12 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
         /** Snapshots older than this are deleted on the next capture. */
         private const val SNAPSHOT_TTL_MS: Long = 5L * 60L * 1000L
+
+        /** Captured bitmaps held at once: one being saved and one waiting. */
+        internal const val MAX_PENDING_SNAPSHOTS = 2
+        internal const val SNAPSHOT_BUSY = "SNAPSHOT_BUSY"
+        private const val SNAPSHOT_BUSY_MESSAGE = "A previous snapshot is still being saved"
+        private const val SNAPSHOT_SESSION_CLOSED_MESSAGE = "Session closed before the snapshot was saved"
 
         /**
          * Schemes permitted via the public `loadUrl` API.

@@ -306,7 +306,7 @@ assumes it stays ON.
 ### Memory Leaks
 
 *   **Event Listeners**: Ensure you are not creating closures that hold onto `GeckoView` refs unnecessarily.
-*   **Large Snapshots**: Avoid frequent calls to `captureSnapshot()` with high resolutions, as this creates large Bitmaps in memory.
+*   **Large Snapshots**: Avoid frequent calls to `captureSnapshot()` with high resolutions, as this creates large Bitmaps in memory. The capture runs on the UI thread and the PNG encode on a background thread; one save runs while one more waits, and a capture beyond that rejects with `SNAPSHOT_BUSY`. A save whose session closes first rejects with `VIEW_NOT_FOUND` and leaves no file behind.
 
 ---
 

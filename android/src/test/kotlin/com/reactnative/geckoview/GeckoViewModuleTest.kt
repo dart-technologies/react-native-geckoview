@@ -347,6 +347,115 @@ class GeckoViewModuleTest {
         dir.deleteRecursively()
     }
 
+    /** A 16x16 capture of "session-a", with GeckoSessionManager mocked to serve it. */
+    private fun stubCapture(): android.graphics.Bitmap {
+        val bitmap = android.graphics.Bitmap.createBitmap(16, 16, android.graphics.Bitmap.Config.ARGB_8888)
+        val view: GeckoView = mockk(relaxed = true)
+        every { view.width } returns 16
+        every { view.height } returns 16
+        every { view.capturePixels() } returns GeckoResult.fromValue(bitmap)
+        mockkObject(GeckoSessionManager)
+        every { GeckoSessionManager.getOpenSession(any()) } returns mockk(relaxed = true)
+        every { GeckoSessionManager.getView(any()) } returns view
+        return bitmap
+    }
+
+    @Test
+    fun `captureSnapshot discards a save whose session closed while it waited`() {
+        // Codex round 3: closeSession could finish cleanup while a captured
+        // bitmap waited on the snapshot executor, and the save then registered
+        // a screenshot for the closed session.
+        val (module, dir) = newModuleWithRealFilesDir()
+        val queued = mutableListOf<Runnable>()
+        module.snapshotExecutor = java.util.concurrent.Executor { queued += it }
+        val bitmap = stubCapture()
+        val promise: Promise = mockk(relaxed = true)
+
+        module.captureSnapshot("session-a", promise)
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        module.cleanupSnapshotsForSessionForTest("session-a")
+        queued.single().run()
+
+        verify { promise.reject(eq("VIEW_NOT_FOUND"), any<String>()) }
+        verify(exactly = 0) { promise.resolve(any()) }
+        assertTrue(module.snapshotsForSessionForTest("session-a").isEmpty())
+        assertTrue(bitmap.isRecycled)
+        val left = java.io.File(dir, "geckoview_snapshots").listFiles().orEmpty()
+        assertTrue("no screenshot may outlive its session", left.isEmpty())
+        dir.deleteRecursively()
+    }
+
+    @Test
+    fun `captureSnapshot discards a save whose session closed while it was being saved`() {
+        val dir = java.io.File(
+            System.getProperty("java.io.tmpdir"),
+            "geckoview-test-${java.util.UUID.randomUUID()}",
+        ).also { it.mkdirs() }
+        val ctx: ReactApplicationContext = mockk(relaxed = true)
+        every { ctx.applicationContext } returns ctx
+        val module = GeckoViewModule(ctx).apply { snapshotExecutor = inlineExecutor }
+        // The save reads noBackupFilesDir after its first cancellation check and
+        // before it registers the file: close the session at that point.
+        every { ctx.noBackupFilesDir } answers {
+            module.cleanupSnapshotsForSessionForTest("session-a")
+            dir
+        }
+        val bitmap = stubCapture()
+        val promise: Promise = mockk(relaxed = true)
+
+        module.captureSnapshot("session-a", promise)
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        verify { promise.reject(eq("VIEW_NOT_FOUND"), any<String>()) }
+        verify(exactly = 0) { promise.resolve(any()) }
+        assertTrue(module.snapshotsForSessionForTest("session-a").isEmpty())
+        assertTrue(bitmap.isRecycled)
+        val left = java.io.File(dir, "geckoview_snapshots").listFiles().orEmpty()
+        assertTrue("the written file must be deleted", left.isEmpty())
+        dir.deleteRecursively()
+    }
+
+    @Test
+    fun `captureSnapshot rejects with SNAPSHOT_BUSY when the save queue is full`() {
+        // Codex round 3: an unbounded save queue held every captured bitmap.
+        val (module, dir) = newModuleWithRealFilesDir()
+        module.snapshotExecutor = java.util.concurrent.Executor {
+            throw java.util.concurrent.RejectedExecutionException("full")
+        }
+        val bitmap = stubCapture()
+        val promise: Promise = mockk(relaxed = true)
+
+        module.captureSnapshot("session-a", promise)
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        verify { promise.reject(eq(GeckoViewModule.SNAPSHOT_BUSY), any<String>()) }
+        verify(exactly = 0) { promise.resolve(any()) }
+        assertTrue(bitmap.isRecycled)
+        dir.deleteRecursively()
+    }
+
+    @Test
+    fun `captureSnapshot refuses to capture while two saves are pending`() {
+        val (module, dir) = newModuleWithRealFilesDir()
+        val queued = mutableListOf<Runnable>()
+        module.snapshotExecutor = java.util.concurrent.Executor { queued += it }
+        stubCapture()
+
+        repeat(GeckoViewModule.MAX_PENDING_SNAPSHOTS) {
+            module.captureSnapshot("session-a", mockk(relaxed = true))
+        }
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertEquals(GeckoViewModule.MAX_PENDING_SNAPSHOTS, queued.size)
+
+        val third: Promise = mockk(relaxed = true)
+        module.captureSnapshot("session-a", third)
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        verify { third.reject(eq(GeckoViewModule.SNAPSHOT_BUSY), any<String>()) }
+        assertEquals(GeckoViewModule.MAX_PENDING_SNAPSHOTS, queued.size)
+        dir.deleteRecursively()
+    }
+
     @Test
     fun `captureSnapshot recycles the bitmap on the success path (Fix 4)`() {
         val (module, dir) = newModuleWithRealFilesDir()
