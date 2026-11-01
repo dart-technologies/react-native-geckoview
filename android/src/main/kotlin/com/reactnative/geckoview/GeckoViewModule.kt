@@ -371,18 +371,37 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             )
             return
         }
-        if (synchronized(snapshotsLock) { pendingSnapshots.size } >= MAX_PENDING_SNAPSHOTS) {
+        // Take a pending slot before capturing, atomically with the capacity
+        // check: session cleanup can then cancel a capture still in flight, and
+        // a burst can't start more captures than the save queue holds. Every
+        // path that doesn't reach saveSnapshot gives the slot back.
+        val pending = PendingSnapshot(sessionKey)
+        val admitted = synchronized(snapshotsLock) {
+            pendingSnapshots.size < MAX_PENDING_SNAPSHOTS && pendingSnapshots.add(pending)
+        }
+        if (!admitted) {
             promise.reject(SNAPSHOT_BUSY, SNAPSHOT_BUSY_MESSAGE)
             return
         }
+        fun releaseSlot() {
+            synchronized(snapshotsLock) { pendingSnapshots.remove(pending) }
+        }
 
-        view.capturePixels().then(
+        val capture = try {
+            view.capturePixels()
+        } catch (e: Exception) {
+            releaseSlot()
+            throw e
+        }
+        capture.then(
             { bitmap ->
                 if (bitmap == null) {
+                    releaseSlot()
                     promise.reject("SNAPSHOT_ERROR", "Failed to capture snapshot: Bitmap is null")
                     return@then GeckoResult.fromValue(null)
                 }
                 if (bitmap.width.toLong() * bitmap.height.toLong() > maxPixels) {
+                    releaseSlot()
                     bitmap.recycle()
                     promise.reject(
                         "SNAPSHOT_TOO_LARGE",
@@ -392,12 +411,12 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                 }
                 // This continuation runs on the UI thread; encoding a full-screen
                 // PNG and writing it would block input and rendering there.
-                val pending = PendingSnapshot(sessionKey)
-                synchronized(snapshotsLock) { pendingSnapshots.add(pending) }
+                // saveSnapshot gives the slot back, including when the session
+                // closed while the pixels were captured.
                 try {
                     snapshotExecutor.execute { saveSnapshot(bitmap, pending, promise) }
                 } catch (e: Exception) {
-                    synchronized(snapshotsLock) { pendingSnapshots.remove(pending) }
+                    releaseSlot()
                     bitmap.recycle()
                     if (e is java.util.concurrent.RejectedExecutionException) {
                         promise.reject(SNAPSHOT_BUSY, SNAPSHOT_BUSY_MESSAGE)
@@ -410,6 +429,7 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             // Without this exception listener the React promise hangs forever
             // when capturePixels() completes with a Throwable.
             GeckoResult.OnExceptionListener<GeckoResult<Void>?> { throwable ->
+                releaseSlot()
                 promise.reject(
                     "SNAPSHOT_ERROR",
                     throwable.message ?: "capturePixels failed",
