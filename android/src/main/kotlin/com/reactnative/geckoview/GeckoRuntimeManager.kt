@@ -285,6 +285,16 @@ object GeckoRuntimeManager {
      */
     fun shutdown() {
         try {
+            // Settle in-flight evaluations now: once the runtime quits, only
+            // their 10 s EVAL_TIMEOUT would.
+            webExtensionController?.rejectAllPendingEvals(
+                "EVAL_BRIDGE_UNAVAILABLE",
+                "GeckoView runtime shut down"
+            )
+        } catch (e: Throwable) {
+            GeckoLog.w(TAG, "Failed to settle pending evaluations during shutdown", e)
+        }
+        try {
             GeckoSessionManager.closeAllSessions()
         } catch (e: Throwable) {
             GeckoLog.w(TAG, "Failed to close sessions during shutdown", e)

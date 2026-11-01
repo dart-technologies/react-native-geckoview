@@ -45,6 +45,8 @@ class WebExtensionTest {
     fun setUp() {
         TestHelpers.mockArguments()
         runtime = mockk(relaxed = true)
+        // evaluateJavaScript consults the process-wide UX gate; start open.
+        GeckoSessionManager.setPlaybackAllowed(true)
     }
 
     @After
@@ -221,7 +223,7 @@ class WebExtensionTest {
         verify(exactly = 0) { promise.reject(any<String>(), any<String>()) }
     }
 
-    // ========== rejectPendingForKey single-completion guard ==========
+    // ========== port-scoped rejection single-completion guard ==========
     //
     // Pinned regression: an earlier review surfaced concern that a port
     // disconnect followed by a late eval result on the same requestId would
@@ -229,21 +231,13 @@ class WebExtensionTest {
     // — the second settle path finds the entry gone and short-circuits.
 
     @Test
-    fun `rejectPendingForKey settles each pending eval exactly once`() {
+    fun `a port disconnect settles each of its pending evals exactly once`() {
         val controller = WebExtensionController(runtime)
+        val port: WebExtension.Port = mockk(relaxed = true)
         val promise: Promise = mockk(relaxed = true)
-        controller.seedPendingEvalForTest(
-            requestId = "r1",
-            extensionId = "ext@geckoview.dev",
-            sessionKey = "session-a",
-            promise = promise,
-        )
-        controller.rejectPendingForKeyForTest(
-            extensionId = "ext@geckoview.dev",
-            sessionKey = "session-a",
-            code = "EVAL_BRIDGE_UNAVAILABLE",
-            message = "disconnected",
-        )
+        controller.seedPendingEvalForTest(requestId = "r1", promise = promise, port = port)
+
+        controller.rejectPendingForPortForTest(port, "EVAL_BRIDGE_UNAVAILABLE", "disconnected")
 
         verify(exactly = 1) { promise.reject("EVAL_BRIDGE_UNAVAILABLE", "disconnected") }
         verify(exactly = 0) { promise.resolve(any()) }
@@ -252,21 +246,12 @@ class WebExtensionTest {
     @Test
     fun `late eval result after disconnect does not double-settle the promise`() {
         val controller = WebExtensionController(runtime)
+        val port: WebExtension.Port = mockk(relaxed = true)
         val promise: Promise = mockk(relaxed = true)
-        controller.seedPendingEvalForTest(
-            requestId = "r1",
-            extensionId = "ext@geckoview.dev",
-            sessionKey = "session-a",
-            promise = promise,
-        )
+        controller.seedPendingEvalForTest(requestId = "r1", promise = promise, port = port)
 
         // Disconnect first — rejects r1 and removes it from the map.
-        controller.rejectPendingForKeyForTest(
-            extensionId = "ext@geckoview.dev",
-            sessionKey = "session-a",
-            code = "EVAL_BRIDGE_UNAVAILABLE",
-            message = "disconnected",
-        )
+        controller.rejectPendingForPortForTest(port, "EVAL_BRIDGE_UNAVAILABLE", "disconnected")
         // Then a late result message arrives for the same requestId — the
         // entry is gone, so handleEvalResult must short-circuit without
         // attempting a second settle.
@@ -277,37 +262,40 @@ class WebExtensionTest {
     }
 
     @Test
-    fun `rejectPendingForKey does not affect entries for a different key`() {
+    fun `a disconnect leaves evals sent through other ports pending`() {
         val controller = WebExtensionController(runtime)
-        val sessionAPromise: Promise = mockk(relaxed = true)
-        val sessionBPromise: Promise = mockk(relaxed = true)
-        controller.seedPendingEvalForTest(
-            requestId = "r1",
-            extensionId = "ext@geckoview.dev",
-            sessionKey = "session-a",
-            promise = sessionAPromise,
-        )
-        controller.seedPendingEvalForTest(
-            requestId = "r2",
-            extensionId = "ext@geckoview.dev",
-            sessionKey = "session-b",
-            promise = sessionBPromise,
-        )
+        val portA: WebExtension.Port = mockk(relaxed = true)
+        val portB: WebExtension.Port = mockk(relaxed = true)
+        val promiseA: Promise = mockk(relaxed = true)
+        val promiseB: Promise = mockk(relaxed = true)
+        controller.seedPendingEvalForTest(requestId = "r1", promise = promiseA, port = portA)
+        controller.seedPendingEvalForTest(requestId = "r2", promise = promiseB, port = portB)
 
-        controller.rejectPendingForKeyForTest(
-            extensionId = "ext@geckoview.dev",
-            sessionKey = "session-a",
-            code = "EVAL_BRIDGE_UNAVAILABLE",
-            message = "disconnected",
-        )
+        controller.rejectPendingForPortForTest(portA, "EVAL_BRIDGE_UNAVAILABLE", "disconnected")
 
-        // Only session-a's pending eval should be rejected.
-        verify(exactly = 1) { sessionAPromise.reject("EVAL_BRIDGE_UNAVAILABLE", "disconnected") }
-        verify(exactly = 0) { sessionBPromise.reject(any<String>(), any<String>()) }
+        // Only portA's pending eval is rejected.
+        verify(exactly = 1) { promiseA.reject("EVAL_BRIDGE_UNAVAILABLE", "disconnected") }
+        verify(exactly = 0) { promiseB.reject(any<String>(), any<String>()) }
 
-        // session-b's pending eval should still be settle-able by a result.
+        // portB's pending eval can still be settled by a result.
         controller.simulateEvalResultForTest("r2", result = "ok")
-        verify(exactly = 1) { sessionBPromise.resolve("ok") }
+        verify(exactly = 1) { promiseB.resolve("ok") }
+    }
+
+    @Test
+    fun `rejectAllPendingEvals settles every in-flight eval once`() {
+        val controller = WebExtensionController(runtime)
+        val promiseA: Promise = mockk(relaxed = true)
+        val promiseB: Promise = mockk(relaxed = true)
+        controller.seedPendingEvalForTest(requestId = "r1", promise = promiseA, port = mockk(relaxed = true))
+        controller.seedPendingEvalForTest(requestId = "r2", promise = promiseB, port = mockk(relaxed = true))
+
+        controller.rejectAllPendingEvals("PLAYBACK_RESTRICTED", "restricted")
+        controller.simulateEvalResultForTest("r1", result = "late")
+
+        verify(exactly = 1) { promiseA.reject("PLAYBACK_RESTRICTED", "restricted") }
+        verify(exactly = 1) { promiseB.reject("PLAYBACK_RESTRICTED", "restricted") }
+        verify(exactly = 0) { promiseA.resolve(any()) }
     }
 
     // ========== isTrustedForInput — input-injection trust gate ==========
@@ -628,12 +616,7 @@ class WebExtensionTest {
     fun `EVAL_RESULT_TYPE message routes to the pending eval and resolves`() {
         val controller = WebExtensionController(runtime)
         val promise: Promise = mockk(relaxed = true)
-        controller.seedPendingEvalForTest(
-            requestId = "rid-1",
-            extensionId = WebExtensionController.INTERNAL_BRIDGE_EXTENSION_ID,
-            sessionKey = "session-a",
-            promise = promise,
-        )
+        controller.seedPendingEvalForTest(requestId = "rid-1", promise = promise)
 
         // Arrives as a top-level message of type EVAL_RESULT_TYPE -> handleEvalResult.
         controller.handleMessageForTest(
@@ -652,12 +635,7 @@ class WebExtensionTest {
     fun `EVAL_RESULT_TYPE message with an error field rejects the pending eval`() {
         val controller = WebExtensionController(runtime)
         val promise: Promise = mockk(relaxed = true)
-        controller.seedPendingEvalForTest(
-            requestId = "rid-err",
-            extensionId = WebExtensionController.INTERNAL_BRIDGE_EXTENSION_ID,
-            sessionKey = "session-a",
-            promise = promise,
-        )
+        controller.seedPendingEvalForTest(requestId = "rid-err", promise = promise)
 
         controller.handleMessageForTest(
             WebExtensionController.INTERNAL_BRIDGE_EXTENSION_ID,
@@ -676,12 +654,7 @@ class WebExtensionTest {
     fun `EVAL_RESULT_TYPE message with no result resolves undefined`() {
         val controller = WebExtensionController(runtime)
         val promise: Promise = mockk(relaxed = true)
-        controller.seedPendingEvalForTest(
-            requestId = "rid-undef",
-            extensionId = WebExtensionController.INTERNAL_BRIDGE_EXTENSION_ID,
-            sessionKey = "session-a",
-            promise = promise,
-        )
+        controller.seedPendingEvalForTest(requestId = "rid-undef", promise = promise)
 
         controller.simulateEvalResultForTest("rid-undef", result = null)
 
@@ -802,6 +775,81 @@ class WebExtensionTest {
         portDelegate.captured.onDisconnect(port)
 
         verify { promise.reject("EVAL_BRIDGE_UNAVAILABLE", any<String>()) }
+    }
+
+    // ========== Review L1: rejection codes for in-flight evals ==========
+
+    @Test
+    fun `a late disconnect from a replaced document spares evals sent to the live port`() {
+        mockkObject(GeckoSessionManager)
+        every { GeckoSessionManager.isPlaybackAllowed() } returns true
+        val controller = WebExtensionController(runtime)
+        val (oldPort, _) = mockPort(WebExtensionController.INTERNAL_BRIDGE_EXTENSION_ID, "session-a")
+        val oldDelegate = slot<WebExtension.PortDelegate>()
+        every { oldPort.setDelegate(capture(oldDelegate)) } returns Unit
+        val (livePort, _) = mockPort(WebExtensionController.INTERNAL_BRIDGE_EXTENSION_ID, "session-a")
+        val liveDelegate = slot<WebExtension.PortDelegate>()
+        every { livePort.setDelegate(capture(liveDelegate)) } returns Unit
+
+        // The next document's bridge connects before the old one disconnects
+        // (for example a page kept in the back-forward cache).
+        controller.connectPortForTest(oldPort)
+        controller.connectPortForTest(livePort)
+        val promise: Promise = mockk(relaxed = true)
+        org.junit.Assert.assertTrue(controller.evaluateJavaScript("session-a", "document.title", promise))
+        verify(exactly = 1) { livePort.postMessage(any()) }
+
+        // Ports are keyed by session; this used to reject every eval for the key.
+        oldDelegate.captured.onDisconnect(oldPort)
+        verify(exactly = 0) { promise.reject(any<String>(), any<String>()) }
+
+        liveDelegate.captured.onDisconnect(livePort)
+        verify(exactly = 1) { promise.reject("EVAL_BRIDGE_UNAVAILABLE", any<String>()) }
+    }
+
+    @Test
+    fun `a UX restriction rejects in-flight evals with PLAYBACK_RESTRICTED`() {
+        mockkObject(GeckoSessionManager)
+        mockkObject(GeckoRuntimeManager)
+        val controller = WebExtensionController(runtime)
+        every { GeckoRuntimeManager.getWebExtensionController() } returns controller
+        val (port, _) = mockPort(WebExtensionController.INTERNAL_BRIDGE_EXTENSION_ID, "session-a")
+        val portDelegate = slot<WebExtension.PortDelegate>()
+        every { port.setDelegate(capture(portDelegate)) } returns Unit
+        controller.connectPortForTest(port)
+        val promise: Promise = mockk(relaxed = true)
+        controller.evaluateJavaScript("session-a", "1+1", promise)
+
+        try {
+            GeckoSessionManager.setPlaybackAllowed(false)
+
+            // Settled before the posted closeAllSessions runs, not by the port
+            // disconnect it causes (EVAL_BRIDGE_UNAVAILABLE) or a timeout.
+            verify(exactly = 1) { promise.reject("PLAYBACK_RESTRICTED", any<String>()) }
+            portDelegate.captured.onDisconnect(port)
+            verify(exactly = 1) { promise.reject(any<String>(), any<String>()) }
+        } finally {
+            GeckoSessionManager.setPlaybackAllowed(true)
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        }
+    }
+
+    @Test
+    fun `an eval racing a restriction settles with PLAYBACK_RESTRICTED and never reaches the page`() {
+        mockkObject(GeckoSessionManager)
+        val controller = WebExtensionController(runtime)
+        val (port, _) = mockPort(WebExtensionController.INTERNAL_BRIDGE_EXTENSION_ID, "session-a")
+        controller.connectPortForTest(port)
+        // The module passed the gate just before the restriction landed; the
+        // controller re-checks once the request is registered.
+        every { GeckoSessionManager.isPlaybackAllowed() } returns false
+        val promise: Promise = mockk(relaxed = true)
+
+        val handled = controller.evaluateJavaScript("session-a", "1+1", promise)
+
+        org.junit.Assert.assertTrue(handled)
+        verify(exactly = 1) { promise.reject("PLAYBACK_RESTRICTED", any<String>()) }
+        verify(exactly = 0) { port.postMessage(any()) }
     }
 
     @Test

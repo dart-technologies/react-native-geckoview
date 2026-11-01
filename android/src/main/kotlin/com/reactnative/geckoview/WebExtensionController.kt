@@ -26,7 +26,10 @@ class WebExtensionController(private val runtime: GeckoRuntime) {
 
     private data class PortKey(val extensionId: String, val sessionKey: String?)
     private data class PendingEval(
-        val key: PortKey,
+        // The port the request went out on. A disconnect settles only its own
+        // requests: ports are keyed by session, and a document that replaced
+        // this one may already have connected a new port under the same key.
+        val port: WebExtension.Port?,
         val promise: Promise,
         val timeout: Runnable,
     )
@@ -134,8 +137,7 @@ class WebExtensionController(private val runtime: GeckoRuntime) {
     }
 
     fun evaluateJavaScript(sessionKey: String, code: String, promise: Promise): Boolean {
-        val key = PortKey(INTERNAL_BRIDGE_EXTENSION_ID, sessionKey)
-        val port = ports[key] ?: return false
+        val port = ports[PortKey(INTERNAL_BRIDGE_EXTENSION_ID, sessionKey)] ?: return false
         val requestId = UUID.randomUUID().toString()
         val timeout = Runnable {
             pendingEval.remove(requestId)?.promise?.reject(
@@ -143,7 +145,16 @@ class WebExtensionController(private val runtime: GeckoRuntime) {
                 "Timed out waiting for trusted GeckoView eval bridge"
             )
         }
-        pendingEval[requestId] = PendingEval(key, promise, timeout)
+        pendingEval[requestId] = PendingEval(port, promise, timeout)
+        // Checked after the entry is visible, so either this sees a UX
+        // restriction or the restriction's rejectAllPendingEvals sees the entry.
+        if (!GeckoSessionManager.isPlaybackAllowed()) {
+            pendingEval.remove(requestId)?.promise?.reject(
+                GeckoSessionManager.PLAYBACK_RESTRICTED,
+                GeckoSessionManager.PLAYBACK_RESTRICTED_MESSAGE,
+            )
+            return true
+        }
         timeoutHandler.postDelayed(timeout, EVAL_TIMEOUT_MS)
         return try {
             port.postMessage(JSONObject().apply {
@@ -245,8 +256,8 @@ class WebExtensionController(private val runtime: GeckoRuntime) {
                 }
 
                 override fun onDisconnect(port: WebExtension.Port) {
-                    ports.entries.removeAll { it.value === port }
-                    rejectPendingForKey(key, "EVAL_BRIDGE_UNAVAILABLE", "Trusted GeckoView eval bridge disconnected")
+                    synchronized(ports) { ports.entries.removeAll { it.value === port } }
+                    rejectPendingForPort(port, "EVAL_BRIDGE_UNAVAILABLE", "Trusted GeckoView eval bridge disconnected")
                 }
             })
         }
@@ -362,24 +373,18 @@ class WebExtensionController(private val runtime: GeckoRuntime) {
 
     internal fun seedPendingEvalForTest(
         requestId: String,
-        extensionId: String,
-        sessionKey: String?,
         promise: Promise,
+        port: WebExtension.Port? = null,
     ) {
         pendingEval[requestId] = PendingEval(
-            key = PortKey(extensionId, sessionKey),
+            port = port,
             promise = promise,
             timeout = Runnable { /* unused in tests */ },
         )
     }
 
-    internal fun rejectPendingForKeyForTest(
-        extensionId: String,
-        sessionKey: String?,
-        code: String,
-        message: String,
-    ) {
-        rejectPendingForKey(PortKey(extensionId, sessionKey), code, message)
+    internal fun rejectPendingForPortForTest(port: WebExtension.Port, code: String, message: String) {
+        rejectPendingForPort(port, code, message)
     }
 
     internal fun simulateEvalResultForTest(requestId: String, result: String?) {
@@ -426,13 +431,25 @@ class WebExtensionController(private val runtime: GeckoRuntime) {
         message: Any,
     ): GeckoResult<Any>? = messageDelegate.onMessage("nativeApp", message, sender)
 
-    private fun rejectPendingForKey(key: PortKey, code: String, message: String) {
+    /**
+     * Settles every in-flight evaluation, e.g. with PLAYBACK_RESTRICTED when a
+     * UX restriction is about to close all sessions.
+     */
+    fun rejectAllPendingEvals(code: String, message: String) {
+        rejectPending(code, message) { true }
+    }
+
+    private fun rejectPendingForPort(port: WebExtension.Port, code: String, message: String) {
+        rejectPending(code, message) { it.port === port }
+    }
+
+    private fun rejectPending(code: String, message: String, matches: (PendingEval) -> Boolean) {
         // Snapshot the request IDs under the map lock — synchronizedMap requires
         // external sync when iterating any view. Then settle each promise via
         // an atomic remove(): if a concurrent handleEvalResult already pulled
         // the entry, remove() returns null and we skip the second completion.
         val ids = synchronized(pendingEval) {
-            pendingEval.entries.filter { it.value.key == key }.map { it.key }
+            pendingEval.entries.filter { matches(it.value) }.map { it.key }
         }
         for (requestId in ids) {
             val pending = pendingEval.remove(requestId) ?: continue

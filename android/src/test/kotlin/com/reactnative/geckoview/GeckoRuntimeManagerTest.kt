@@ -121,6 +121,18 @@ class GeckoRuntimeManagerTest {
     }
 
     @Test
+    fun `shutdown rejects in-flight evaluations instead of leaving them to time out`() {
+        GeckoRuntimeManager.getRuntime(context)
+        val promise: com.facebook.react.bridge.Promise = mockk(relaxed = true)
+        GeckoRuntimeManager.getWebExtensionController()!!
+            .seedPendingEvalForTest(requestId = "in-flight", promise = promise)
+
+        GeckoRuntimeManager.shutdown()
+
+        verify(exactly = 1) { promise.reject("EVAL_BRIDGE_UNAVAILABLE", any<String>()) }
+    }
+
+    @Test
     fun `getWebExtensionController returns controller after init`() {
         GeckoRuntimeManager.getRuntime(context)
         assertNotNull(GeckoRuntimeManager.getWebExtensionController())

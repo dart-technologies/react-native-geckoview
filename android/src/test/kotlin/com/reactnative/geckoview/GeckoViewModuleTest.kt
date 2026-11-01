@@ -975,6 +975,27 @@ class GeckoViewModuleTest {
     }
 
     @Test
+    fun `evaluateJavaScript waiting for the bridge reports PLAYBACK_RESTRICTED once a restriction lands`() {
+        // Review L1: the gate was checked once on entry, so a restriction landing
+        // during the connect-race retries surfaced as EVAL_BRIDGE_UNAVAILABLE.
+        mockkObject(GeckoSessionManager)
+        every { GeckoSessionManager.getOpenSession(any()) } returns mockk(relaxed = true)
+        // Allowed for the first attempt, restricted by the first retry.
+        every { GeckoSessionManager.isPlaybackAllowed() } returnsMany listOf(true, false)
+        mockkObject(GeckoRuntimeManager)
+        every { GeckoRuntimeManager.getWebExtensionController() } returns null
+
+        val module = newModule()
+        val promise: Promise = mockk(relaxed = true)
+        module.evaluateJavaScript("session-a", "1+1", promise)
+        Shadows.shadowOf(android.os.Looper.getMainLooper())
+            .idleFor(java.time.Duration.ofMillis(EVAL_RETRY_DRAIN_MS))
+
+        verify(exactly = 1) { promise.reject("PLAYBACK_RESTRICTED", any<String>()) }
+        verify(exactly = 0) { promise.reject("EVAL_BRIDGE_UNAVAILABLE", any<String>()) }
+    }
+
+    @Test
     fun `evaluateJavaScript on a closed session rejects at once and never rebuilds it`() {
         // dart-tv's Vimeo tier: stop() calls closeSession while the view stays
         // mounted, then the progress poll keeps evaluating every 1.5 s. Each

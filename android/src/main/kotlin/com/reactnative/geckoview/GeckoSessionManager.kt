@@ -38,8 +38,19 @@ object GeckoSessionManager {
      */
     fun setPlaybackAllowed(allowed: Boolean) {
         playbackAllowed = allowed
-        if (!allowed) UiThreadUtil.runOnUiThread {
-            closeAllSessions()
+        if (!allowed) {
+            UiThreadUtil.runOnUiThread {
+                closeAllSessions()
+            }
+            // Settle in-flight bridge evaluations with the restriction's code
+            // now; the port disconnects that follow the close would report
+            // EVAL_BRIDGE_UNAVAILABLE (or EVAL_TIMEOUT if a post raced them).
+            try {
+                GeckoRuntimeManager.getWebExtensionController()
+                    ?.rejectAllPendingEvals(PLAYBACK_RESTRICTED, PLAYBACK_RESTRICTED_MESSAGE)
+            } catch (e: Exception) {
+                GeckoLog.w(TAG, "Failed to settle pending evaluations", e)
+            }
         }
     }
 
@@ -180,6 +191,9 @@ object GeckoSessionManager {
     fun getSessionKey(session: GeckoSession): String? {
         return sessions.entries.firstOrNull { it.value === session }?.key
     }
+
+    internal const val PLAYBACK_RESTRICTED = "PLAYBACK_RESTRICTED"
+    internal const val PLAYBACK_RESTRICTED_MESSAGE = "Media is blocked by vehicle UX restrictions"
 
     private const val TAG = "GeckoSessionManager"
 }

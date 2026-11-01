@@ -312,7 +312,7 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
     @ReactMethod
     fun captureSnapshot(sessionKey: String, promise: Promise) {
         if (!GeckoSessionManager.isPlaybackAllowed()) {
-            promise.reject("PLAYBACK_RESTRICTED", "Media is blocked by vehicle UX restrictions")
+            promise.reject(GeckoSessionManager.PLAYBACK_RESTRICTED, GeckoSessionManager.PLAYBACK_RESTRICTED_MESSAGE)
             return
         }
         // GeckoView's ScreenshotBuilder.capture asserts the UI thread, and React
@@ -329,7 +329,7 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     private fun captureSnapshotOnUiThread(sessionKey: String, promise: Promise) {
         if (!GeckoSessionManager.isPlaybackAllowed()) {
-            promise.reject("PLAYBACK_RESTRICTED", "Media is blocked by vehicle UX restrictions")
+            promise.reject(GeckoSessionManager.PLAYBACK_RESTRICTED, GeckoSessionManager.PLAYBACK_RESTRICTED_MESSAGE)
             return
         }
         val view = GeckoSessionManager.getOpenSession(sessionKey)?.let { GeckoSessionManager.getView(it) }
@@ -406,14 +406,17 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     @ReactMethod
     fun evaluateJavaScript(sessionKey: String, code: String, promise: Promise) {
-        if (!GeckoSessionManager.isPlaybackAllowed()) {
-            promise.reject("PLAYBACK_RESTRICTED", "Media is blocked by vehicle UX restrictions")
-            return
-        }
         tryEvaluateJavaScript(sessionKey, code, promise, attempt = 0)
     }
 
     private fun tryEvaluateJavaScript(sessionKey: String, code: String, promise: Promise, attempt: Int) {
+        // Checked on every retry: a UX restriction that lands while the bridge
+        // is still connecting reports PLAYBACK_RESTRICTED, not a late
+        // EVAL_BRIDGE_UNAVAILABLE once the retries run out.
+        if (!GeckoSessionManager.isPlaybackAllowed()) {
+            promise.reject(GeckoSessionManager.PLAYBACK_RESTRICTED, GeckoSessionManager.PLAYBACK_RESTRICTED_MESSAGE)
+            return
+        }
         // A closed or never-opened session has no bridge to wait for: reject
         // now instead of polling, and never rebuild the session from here.
         if (GeckoSessionManager.getOpenSession(sessionKey) == null) {
@@ -424,9 +427,9 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             return
         }
         val controller = GeckoRuntimeManager.getWebExtensionController()
-        // Returns true once the eval request is queued (port present); the
-        // bridge's own pendingEval then settles `promise`. A false return means
-        // no port yet for this session.
+        // Returns true once the bridge owns `promise`: the request is queued on
+        // the port (its pendingEval settles it), or a restriction that raced in
+        // already rejected it. A false return means no port yet for this session.
         if (controller != null && controller.evaluateJavaScript(sessionKey, code, promise)) {
             return
         }

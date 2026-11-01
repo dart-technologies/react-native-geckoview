@@ -113,7 +113,7 @@ describe('Feature Tests', () => {
 | `GeckoViewPromptDelegateTest.kt` | Alert/popup/auth; eval-looking alerts stay page alerts |
 | `MediaDelegateTest.kt` | Audio focus, media session; `release()` on view or session teardown |
 | `WebExtensionBridgeAssetsTest.kt` | Pins that `manifest.json` + `bridge.js` ship under `assets/react_native_geckoview_bridge/` |
-| `WebExtensionTest.kt` | Extension APIs + **`isSafeAssetPath` + `safeSerialize` + install rejection + missing-port guards (security guard)**; `installExtension` single-completion contract; `rejectPendingForKey` per-key isolation + late-result short-circuit |
+| `WebExtensionTest.kt` | Extension APIs + **`isSafeAssetPath` + `safeSerialize` + install rejection + missing-port guards (security guard)**; `installExtension` single-completion contract; port-scoped disconnect rejection + late-result short-circuit; in-flight evals reject `PLAYBACK_RESTRICTED` on a UX restriction |
 
 ### JavaScript (`example/__tests__/`)
 
@@ -156,7 +156,7 @@ The security-hardening fixes are exercised across three layers:
 
 | Layer | Tooling | Scope |
 |---|---|---|
-| Unit + integration | Robolectric + MockK + the `*ForTest` `internal` hooks on `GeckoViewModule` and `WebExtensionController` | `@ReactMethod` end-to-end with mocked `GeckoView` / `GeckoResult` / `GeckoSession.PromptDelegate.*Prompt`. Drives every reject branch of `captureSnapshot`, every prompt-type branch of `schedulePromptTimeout`, single-completion of `installExtension` + `rejectPendingForKey`, and the `closeSession → cleanupSnapshotsForSession` per-session scoping. |
+| Unit + integration | Robolectric + MockK + the `*ForTest` `internal` hooks on `GeckoViewModule` and `WebExtensionController` | `@ReactMethod` end-to-end with mocked `GeckoView` / `GeckoResult` / `GeckoSession.PromptDelegate.*Prompt`. Drives every reject branch of `captureSnapshot`, every prompt-type branch of `schedulePromptTimeout`, single-completion of `installExtension` + port-scoped eval rejection, and the `closeSession → cleanupSnapshotsForSession` per-session scoping. |
 | JS API contract | Jest with the shared `setupReactNativeMock` from `testUtils.ts` | Ref shape, sessionKey forwarding, native-side error-code propagation (`VIEW_NOT_FOUND`, `SNAPSHOT_TOO_LARGE`, `SNAPSHOT_ERROR`, `INVALID_ASSET_PATH`, `COOKIE_BANNER_SET_FAILED`), multi-instance isolation. |
 | E2E | Detox | Navigation, security indicators, theme toggle, user agent switching, progress bar. The current example app does not surface `captureSnapshot`, `closeSession`, or `setCookieBannerMode` through testable UI affordances, so the snapshot/cookie-banner/prompt-timeout fixes are **not** covered at the Detox layer. Their behavior is fully exercised by the unit + JS layers above. |
 
