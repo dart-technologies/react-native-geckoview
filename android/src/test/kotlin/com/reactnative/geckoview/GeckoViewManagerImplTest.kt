@@ -53,6 +53,9 @@ class GeckoViewManagerImplTest {
         // Mock GeckoSessionManager behavior
         every { GeckoSessionManager.init(any()) } returns Unit
         every { GeckoSessionManager.getOrCreateSession(any()) } returns session
+        // The UX gate is process-wide and init is stubbed out: open it explicitly
+        // so setSessionKey doesn't depend on which test class ran first.
+        GeckoSessionManager.setPlaybackAllowed(true)
         
         manager = GeckoViewManagerImpl()
     }

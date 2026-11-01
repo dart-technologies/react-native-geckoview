@@ -311,8 +311,8 @@ class GeckoViewNavigationDelegateTest {
 
     @Test
     fun `maps confirmation survives a dialog that cannot be shown`() {
-        // The mocked Activity can't host an AlertDialog; the builder failure is
-        // caught inside the UI-thread runnable and nothing launches.
+        // The mocked Activity can't host a real dialog. Whatever the builder does
+        // inside the UI-thread runnable is caught, and nothing launches unclicked.
         navigationDelegate.onLocationChange(session, "geo:37.7749,-122.4194", mutableListOf(), false)
 
         verify(exactly = 1) { activity.runOnUiThread(any()) }

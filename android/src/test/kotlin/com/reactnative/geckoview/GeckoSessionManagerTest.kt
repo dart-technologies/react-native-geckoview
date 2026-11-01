@@ -159,7 +159,7 @@ class GeckoSessionManagerTest {
      * keeps the race covered and must never surface a CME.
      *
      * We exercise the specific pattern that previously failed: one thread
-     * hammering `init()` (which iterates `sessions.forEach`) while another
+     * hammering `init()` (which used to iterate `sessions.forEach`) while another
      * mutates the session map via `releaseSession`. `GeckoSession`
      * instantiation is skipped because it would require running on Robolectric's
      * main thread; instead we pre-populate with real sessions from the main
