@@ -81,25 +81,25 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
     @ReactMethod
     fun reload(sessionKey: String) {
         if (!GeckoSessionManager.isPlaybackAllowed()) return
-        GeckoSessionManager.getOrCreateSession(sessionKey).reload()
+        openSession(sessionKey)?.reload()
     }
 
     @ReactMethod
     fun goBack(sessionKey: String) {
         if (!GeckoSessionManager.isPlaybackAllowed()) return
-        GeckoSessionManager.getOrCreateSession(sessionKey).goBack()
+        openSession(sessionKey)?.goBack()
     }
 
     @ReactMethod
     fun goForward(sessionKey: String) {
         if (!GeckoSessionManager.isPlaybackAllowed()) return
-        GeckoSessionManager.getOrCreateSession(sessionKey).goForward()
+        openSession(sessionKey)?.goForward()
     }
 
     @ReactMethod
     fun stop(sessionKey: String) {
         if (!GeckoSessionManager.isPlaybackAllowed()) return
-        GeckoSessionManager.getOrCreateSession(sessionKey).stop()
+        openSession(sessionKey)?.stop()
     }
 
     @ReactMethod
@@ -112,7 +112,9 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     @ReactMethod
     fun shutdown() {
-        GeckoRuntimeManager.shutdown()
+        // Closing sessions asserts the UI thread; React calls this on the
+        // native-modules thread.
+        UiThreadUtil.runOnUiThread { GeckoRuntimeManager.shutdown() }
     }
 
     @ReactMethod
@@ -122,13 +124,13 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             GeckoLog.d(TAG, "Rejecting loadUrl with disallowed scheme")
             return
         }
-        GeckoSessionManager.getOrCreateSession(sessionKey).loadUri(url)
+        openSession(sessionKey)?.loadUri(url)
     }
 
     @ReactMethod
     fun setUserAgent(sessionKey: String, userAgent: String) {
         if (!GeckoSessionManager.isPlaybackAllowed()) return
-        val session = GeckoSessionManager.getOrCreateSession(sessionKey)
+        val session = openSession(sessionKey) ?: return
         if (userAgent.isEmpty()) {
             session.settings.userAgentMode = org.mozilla.geckoview.GeckoSessionSettings.USER_AGENT_MODE_MOBILE
             session.settings.userAgentOverride = null
@@ -205,31 +207,35 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     @ReactMethod
     fun installWebExtension(assetPath: String, promise: Promise) {
-        try {
-            GeckoRuntimeManager.getRuntime(reactApplicationContext)
-            val controller = GeckoRuntimeManager.getWebExtensionController()
-            if (controller == null) {
-                promise.reject("GECKO_RUNTIME", "WebExtensionController not available")
-                return
-            }
-
-            controller.installExtension(assetPath) { success, error ->
-                if (success) {
-                    promise.resolve(null)
-                } else if (error is IllegalArgumentException) {
-                    promise.reject(
-                        "INVALID_ASSET_PATH",
-                        error.message ?: "Invalid extension asset path"
-                    )
-                } else {
-                    promise.reject(
-                        "WEB_EXTENSION_INSTALL",
-                        error?.message ?: "Failed to install web extension"
-                    )
+        // This can run before any GeckoView mounts, and creating the runtime
+        // asserts the UI thread.
+        UiThreadUtil.runOnUiThread {
+            try {
+                GeckoRuntimeManager.getRuntime(reactApplicationContext)
+                val controller = GeckoRuntimeManager.getWebExtensionController()
+                if (controller == null) {
+                    promise.reject("GECKO_RUNTIME", "WebExtensionController not available")
+                    return@runOnUiThread
                 }
+
+                controller.installExtension(assetPath) { success, error ->
+                    if (success) {
+                        promise.resolve(null)
+                    } else if (error is IllegalArgumentException) {
+                        promise.reject(
+                            "INVALID_ASSET_PATH",
+                            error.message ?: "Invalid extension asset path"
+                        )
+                    } else {
+                        promise.reject(
+                            "WEB_EXTENSION_INSTALL",
+                            error?.message ?: "Failed to install web extension"
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                promise.reject("WEB_EXTENSION_INSTALL", e)
             }
-        } catch (e: Exception) {
-            promise.reject("WEB_EXTENSION_INSTALL", e)
         }
     }
 
@@ -292,8 +298,7 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             promise.reject("PLAYBACK_RESTRICTED", "Media is blocked by vehicle UX restrictions")
             return
         }
-        val session = GeckoSessionManager.getOrCreateSession(sessionKey)
-        val view = GeckoSessionManager.getView(session)
+        val view = GeckoSessionManager.getOpenSession(sessionKey)?.let { GeckoSessionManager.getView(it) }
 
         if (view == null) {
             promise.reject("VIEW_NOT_FOUND", "No GeckoView attached to session: $sessionKey")
@@ -371,11 +376,19 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             promise.reject("PLAYBACK_RESTRICTED", "Media is blocked by vehicle UX restrictions")
             return
         }
-        GeckoSessionManager.getOrCreateSession(sessionKey)
         tryEvaluateJavaScript(sessionKey, code, promise, attempt = 0)
     }
 
     private fun tryEvaluateJavaScript(sessionKey: String, code: String, promise: Promise, attempt: Int) {
+        // A closed or never-opened session has no bridge to wait for: reject
+        // now instead of polling, and never rebuild the session from here.
+        if (GeckoSessionManager.getOpenSession(sessionKey) == null) {
+            promise.reject(
+                "EVAL_BRIDGE_UNAVAILABLE",
+                "GeckoView session is closed or has not been opened by a mounted view"
+            )
+            return
+        }
         val controller = GeckoRuntimeManager.getWebExtensionController()
         // Returns true once the eval request is queued (port present); the
         // bridge's own pendingEval then settles `promise`. A false return means
@@ -398,6 +411,17 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             EVAL_BRIDGE_RETRY_DELAY_MS
         )
     }
+
+    /**
+     * The session a mounted view opened for [sessionKey], or null once it is
+     * closed. Ref methods run on the native-modules thread, where opening a
+     * GeckoSession throws, so they never create one: void methods no-op and
+     * promise methods reject.
+     */
+    private fun openSession(sessionKey: String): GeckoSession? =
+        GeckoSessionManager.getOpenSession(sessionKey).also {
+            if (it == null) GeckoLog.d(TAG, "No open session for ref method; ignoring")
+        }
 
     fun storePendingPrompt(promptId: String, prompt: Any, result: GeckoResult<Any>) {
         pendingPrompts[promptId] = PromptInfo(prompt, result)

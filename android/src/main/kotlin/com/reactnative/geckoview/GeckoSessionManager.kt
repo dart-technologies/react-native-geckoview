@@ -6,6 +6,18 @@ import com.facebook.react.bridge.UiThreadUtil
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
 
+/**
+ * Pool of GeckoSessions keyed by the JS `sessionKey`.
+ *
+ * Threading: sessions are created, opened and closed on the UI thread only,
+ * because GeckoRuntime.create, GeckoSession.open and GeckoSession.close assert
+ * it. Ref methods arrive on the native-modules thread and only look up a
+ * session a view already opened ([getOpenSession]); they never build one.
+ *
+ * Lock order: this object's monitor may be held while taking
+ * [GeckoRuntimeManager]'s (opening a session needs the runtime), never the
+ * reverse. [GeckoRuntimeManager.shutdown] relies on that.
+ */
 object GeckoSessionManager {
     private val sessions = java.util.concurrent.ConcurrentHashMap<String, GeckoSession>()
     private val openedSessionKeys = java.util.Collections.newSetFromMap(
@@ -16,21 +28,26 @@ object GeckoSessionManager {
 
     fun isPlaybackAllowed(): Boolean = playbackAllowed == true
 
-    /** Called by the host's native per-display UX restriction listener, before JS notification. */
+    /**
+     * Called by the host's native per-display UX restriction listener, before JS notification.
+     *
+     * Clearing UXR never reopens a pooled session or resumes media. While
+     * playback is disallowed the `sessionKey` and `source` props are dropped,
+     * not queued, so after `setPlaybackAllowed(true)` the host remounts the
+     * GeckoView to bind a fresh session and load its source.
+     */
     fun setPlaybackAllowed(allowed: Boolean) {
         playbackAllowed = allowed
         if (!allowed) UiThreadUtil.runOnUiThread {
             closeAllSessions()
         }
-        // Clearing UXR never reopens a pooled session or resumes media.
     }
 
     /**
-     * Install the application Context and backfill any sessions that were
-     * created before it was known. `@Synchronized` guards the scan so a
-     * concurrent `getOrCreateSession` can't mutate the map mid-iteration
-     * (previously threw `ConcurrentModificationException` under first-view
-     * races).
+     * Install the application Context. Never opens pooled sessions: a session
+     * opens only when a view binds it on the UI thread, so one left unopened
+     * can't be revived here with no view attached (this used to open them,
+     * from whichever thread created the module).
      */
     @Synchronized
     fun init(appContext: Context) {
@@ -38,13 +55,17 @@ object GeckoSessionManager {
         if (playbackAllowed == null) {
             playbackAllowed = !appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)
         }
-        sessions.forEach { (key, session) ->
-            ensureSessionOpen(key, session)
-        }
     }
 
+    /**
+     * UI thread only: view prop setters bind sessions through here. Creates
+     * the pooled session for [key] if needed and opens it.
+     */
     @Synchronized
     fun getOrCreateSession(key: String, desktopMode: Boolean = true): GeckoSession {
+        check(UiThreadUtil.isOnUiThread()) {
+            "GeckoSessions are created and opened on the UI thread only"
+        }
         val session = sessions.getOrPut(key) {
             GeckoSession(
                 GeckoSessionSettings.Builder()
@@ -64,6 +85,15 @@ object GeckoSessionManager {
         return session
     }
 
+    /**
+     * The pooled session for [key] if a view has opened it, else null. Never
+     * creates or opens a session, so it is safe on any thread; ref methods
+     * treat null as "session unavailable".
+     */
+    fun getOpenSession(key: String): GeckoSession? =
+        if (openedSessionKeys.contains(key)) sessions[key] else null
+
+    /** UI thread only (GeckoSession.close asserts it). */
     @Synchronized
     fun releaseSession(key: String) {
         openedSessionKeys.remove(key)
@@ -73,6 +103,7 @@ object GeckoSessionManager {
         }
     }
 
+    /** UI thread only (GeckoSession.close asserts it). */
     @Synchronized
     fun closeAllSessions() {
         sessions.values.forEach { session ->

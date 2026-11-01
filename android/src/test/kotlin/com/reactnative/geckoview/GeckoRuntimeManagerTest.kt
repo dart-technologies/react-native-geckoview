@@ -9,6 +9,7 @@ import io.mockk.unmockkAll
 import io.mockk.verify
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -80,6 +81,37 @@ class GeckoRuntimeManagerTest {
         verify { mockRuntime.shutdown() }
     }
     
+    @Test
+    fun `shutdown never holds the runtime monitor while it waits for the session monitor`() {
+        // GeckoSessionManager.getOrCreateSession holds the session monitor and
+        // calls getRuntime (runtime monitor). shutdown used to hold the runtime
+        // monitor and call closeAllSessions (session monitor), so a view mounting
+        // on the UI thread could deadlock against JS calling shutdown.
+        val shutdownThread = Thread { GeckoRuntimeManager.shutdown() }
+        // Stand-in for that UI-thread getRuntime: any call that needs the runtime monitor.
+        val runtimeMonitorProbe = Thread {
+            GeckoRuntimeManager.configureSecurity(GeckoSecurityConfig.current())
+        }
+        synchronized(GeckoSessionManager) {
+            shutdownThread.start()
+            // Wait until shutdown is parked on the session monitor this thread holds.
+            val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
+            while (shutdownThread.state != Thread.State.BLOCKED && System.nanoTime() < deadline) {
+                Thread.yield()
+            }
+            assertEquals(Thread.State.BLOCKED, shutdownThread.state)
+
+            runtimeMonitorProbe.start()
+            runtimeMonitorProbe.join(5_000)
+            assertFalse(
+                "shutdown held the runtime monitor while waiting for the session monitor",
+                runtimeMonitorProbe.isAlive,
+            )
+        }
+        shutdownThread.join(5_000)
+        assertFalse(shutdownThread.isAlive)
+    }
+
     @Test
     fun `getWebExtensionController returns controller after init`() {
         GeckoRuntimeManager.getRuntime(context)

@@ -279,7 +279,9 @@ assumes it stays ON.
 ### Session Management
 
 *   **Reuse Sessions**: Use `sessionKey` to persist state (cookies, history, cache) across component unmounts. This avoids expensive re-initialization.
-*   **Limit Concurrent Sessions**: Each `GeckoSession` consumes significant memory. Destroy unused sessions using `GeckoViewModule.shutdown()` if necessary, though React Native's lifecycle usually handles this.
+*   **Limit Concurrent Sessions**: Each `GeckoSession` consumes significant memory. Close a view's session with `ref.closeSession()`; `ref.shutdown()` tears down the runtime and every session in the process.
+*   **Closed sessions stay closed**: sessions are created and opened only when a mounted view binds its `sessionKey`. After `closeSession()`, ref methods on that view never rebuild the session: `reload`, `goBack`, `goForward`, `stop`, `loadUrl` and `setUserAgent` do nothing, `evaluateJavaScript` rejects with `EVAL_BRIDGE_UNAVAILABLE` and `captureSnapshot` rejects with `VIEW_NOT_FOUND`. Remount the `GeckoView` (for example by changing its React `key`) to get a fresh session.
+*   **AAOS playback gate**: while the host has called `GeckoSessionManager.setPlaybackAllowed(false)`, every session is closed and the `sessionKey` and `source` props are dropped, not queued. `setPlaybackAllowed(true)` never reopens a session or resumes media, so remount the `GeckoView` once playback is allowed again.
 
 ### Rendering
 

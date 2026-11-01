@@ -11,8 +11,10 @@ import java.lang.reflect.Method
 import java.lang.reflect.Proxy
 
 object GeckoRuntimeManager {
-    private var runtime: GeckoRuntime? = null
-    private var webExtensionController: WebExtensionController? = null
+    // Written under this object's monitor, read lock-free by getRuntime() and
+    // getWebExtensionController() from the native-modules thread.
+    @Volatile private var runtime: GeckoRuntime? = null
+    @Volatile private var webExtensionController: WebExtensionController? = null
 
     /**
      * Extensions the host app is allowed to install or update.
@@ -40,6 +42,7 @@ object GeckoRuntimeManager {
         }
     }
 
+    /** Creates the runtime on first use, which GeckoRuntime.create allows on the UI thread only. */
     @Synchronized
     fun getRuntime(context: Context): GeckoRuntime {
         if (runtime == null) {
@@ -238,20 +241,32 @@ object GeckoRuntimeManager {
 
     fun getWebExtensionController(): WebExtensionController? = webExtensionController
 
-    @Synchronized
+    /**
+     * Close every pooled session, then shut the runtime down. UI thread only
+     * (GeckoSession.close asserts it); [GeckoViewModule.shutdown] posts here.
+     *
+     * Must not hold this object's monitor while closing sessions:
+     * GeckoSessionManager opens a session under its own monitor and then
+     * calls [getRuntime], so taking the monitors in the opposite order here
+     * deadlocked a view mounting on the UI thread against a shutdown.
+     */
     fun shutdown() {
         try {
             GeckoSessionManager.closeAllSessions()
         } catch (e: Throwable) {
             GeckoLog.w(TAG, "Failed to close sessions during shutdown", e)
         }
+        val stopping = synchronized(this) {
+            val current = runtime
+            runtime = null
+            webExtensionController = null
+            current
+        }
         try {
-            runtime?.shutdown()
+            stopping?.shutdown()
         } catch (e: Throwable) {
             GeckoLog.w(TAG, "Failed to shutdown runtime", e)
         }
-        runtime = null
-        webExtensionController = null
     }
 
     private const val TAG = "GeckoRuntimeManager"

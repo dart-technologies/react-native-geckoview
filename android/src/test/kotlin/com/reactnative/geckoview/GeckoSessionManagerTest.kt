@@ -5,10 +5,12 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkAll
+import io.mockk.verify
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -152,8 +154,9 @@ class GeckoSessionManagerTest {
      * Previously `sessions` was a plain `mutableMapOf<String, GeckoSession>()`
      * and `init()` iterated without synchronization — a second thread
      * mutating `sessions` mid-iteration would throw
-     * `ConcurrentModificationException`. With `ConcurrentHashMap` +
-     * `@Synchronized init()`, the stress test below must never surface a CME.
+     * `ConcurrentModificationException`. `init()` no longer walks the pool at
+     * all (see `init never opens pooled sessions`); the stress test below
+     * keeps the race covered and must never surface a CME.
      *
      * We exercise the specific pattern that previously failed: one thread
      * hammering `init()` (which iterates `sessions.forEach`) while another
@@ -197,12 +200,12 @@ class GeckoSessionManagerTest {
     }
 
     /**
-     * Companion regression: the specific race where `init()` iterates while
+     * Companion regression: the race where `init()` used to iterate while
      * `getOrCreateSession` (on the main thread, since GeckoSession requires
      * it) inserts a new key. We simulate the insertion side by poking the
      * underlying ConcurrentHashMap through a separate thread that hammers
-     * `getAllSessions()` — this triggers the same forEach path without
-     * needing GeckoSession construction off the UI thread.
+     * `getAllSessions()`, without needing GeckoSession construction off the
+     * UI thread.
      */
     @Test
     fun `init iteration is safe under concurrent readers`() {
@@ -230,6 +233,60 @@ class GeckoSessionManagerTest {
             "init + getAllSessions concurrently must not throw; got ${errors.firstOrNull()}",
             errors.none { it is java.util.ConcurrentModificationException },
         )
+    }
+
+    // ========== UI-thread confinement (self-review M1) ==========
+
+    @Test
+    fun `getOrCreateSession refuses to build a session off the UI thread`() {
+        // Ref methods run on the native-modules thread. There GeckoSession.open
+        // (and GeckoRuntime.create) throw IllegalThreadStateException, which
+        // used to leave an unopened orphan in the pool.
+        var failure: Throwable? = null
+        val nativeModulesThread = Thread {
+            try {
+                GeckoSessionManager.getOrCreateSession("worker-key")
+            } catch (t: Throwable) {
+                failure = t
+            }
+        }
+        nativeModulesThread.start()
+        nativeModulesThread.join()
+
+        assertTrue("expected IllegalStateException, got $failure", failure is IllegalStateException)
+        assertFalse(GeckoSessionManager.getAllSessions().containsKey("worker-key"))
+        verify(exactly = 0) { GeckoRuntimeManager.getRuntime(any()) }
+    }
+
+    @Test
+    fun `getOpenSession only returns a session a view opened and never creates one`() {
+        assertNull(GeckoSessionManager.getOpenSession("never-bound"))
+        assertFalse(GeckoSessionManager.getAllSessions().containsKey("never-bound"))
+
+        val session = GeckoSessionManager.getOrCreateSession("bound")
+        assertSame(session, GeckoSessionManager.getOpenSession("bound"))
+
+        GeckoSessionManager.releaseSession("bound")
+        assertNull(GeckoSessionManager.getOpenSession("bound"))
+    }
+
+    @Test
+    fun `init never opens pooled sessions`() {
+        // Leave a session in the pool unopened (the runtime failed to start).
+        // init used to open every pooled session, which revived orphans with no
+        // view attached on the next createViewInstance or module init.
+        every { GeckoRuntimeManager.getRuntime(any()) } throws IllegalStateException("runtime unavailable")
+        try {
+            GeckoSessionManager.getOrCreateSession("orphan")
+        } catch (_: IllegalStateException) {
+        }
+        assertTrue(GeckoSessionManager.getAllSessions().containsKey("orphan"))
+        every { GeckoRuntimeManager.getRuntime(any()) } returns mockRuntime
+
+        GeckoSessionManager.init(context)
+
+        verify(exactly = 1) { GeckoRuntimeManager.getRuntime(any()) }
+        assertNull(GeckoSessionManager.getOpenSession("orphan"))
     }
 
     @Test

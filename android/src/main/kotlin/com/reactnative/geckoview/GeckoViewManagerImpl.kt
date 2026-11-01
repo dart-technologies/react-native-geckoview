@@ -33,6 +33,8 @@ class GeckoViewManagerImpl {
     }
 
     fun setSessionKey(view: GeckoView, sessionKey: String?) {
+        // Dropped, not queued, while playback is restricted: lifting the
+        // restriction never reopens a session, so the host remounts the view.
         if (!GeckoSessionManager.isPlaybackAllowed()) return
         if (sessionKey == null) return
         try {
@@ -183,6 +185,7 @@ class GeckoViewManagerImpl {
     }
 
     private fun loadUriWithRetry(view: GeckoView, uri: String, retryCount: Int = 0) {
+        // Like setSessionKey: a source set while restricted is dropped until remount.
         if (!GeckoSessionManager.isPlaybackAllowed()) return
         val session = view.session
 

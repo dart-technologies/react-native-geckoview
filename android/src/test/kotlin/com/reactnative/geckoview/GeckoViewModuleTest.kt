@@ -14,6 +14,7 @@ import io.mockk.verify
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -124,6 +125,8 @@ class GeckoViewModuleTest {
     fun tearDown() {
         unmockkAll()
         GeckoSecurityConfig.resetForTests()
+        // GeckoSessionManager is process-wide; leave the gate open for the next test.
+        GeckoSessionManager.setPlaybackAllowed(true)
     }
 
     @Test
@@ -212,7 +215,7 @@ class GeckoViewModuleTest {
     @Test
     fun `captureSnapshot rejects with VIEW_NOT_FOUND when no view is attached`() {
         mockkObject(GeckoSessionManager)
-        every { GeckoSessionManager.getOrCreateSession(any()) } returns mockk(relaxed = true)
+        every { GeckoSessionManager.getOpenSession(any()) } returns mockk(relaxed = true)
         every { GeckoSessionManager.getView(any()) } returns null
 
         val module = newModule()
@@ -231,7 +234,7 @@ class GeckoViewModuleTest {
         every { view.height } returns 5000  // 25M > 16M cap
 
         mockkObject(GeckoSessionManager)
-        every { GeckoSessionManager.getOrCreateSession(any()) } returns mockk(relaxed = true)
+        every { GeckoSessionManager.getOpenSession(any()) } returns mockk(relaxed = true)
         every { GeckoSessionManager.getView(any()) } returns view
 
         val module = newModule()
@@ -252,7 +255,7 @@ class GeckoViewModuleTest {
         every { view.capturePixels() } returns GeckoResult.fromValue<android.graphics.Bitmap>(null)
 
         mockkObject(GeckoSessionManager)
-        every { GeckoSessionManager.getOrCreateSession(any()) } returns mockk(relaxed = true)
+        every { GeckoSessionManager.getOpenSession(any()) } returns mockk(relaxed = true)
         every { GeckoSessionManager.getView(any()) } returns view
 
         val module = newModule()
@@ -274,7 +277,7 @@ class GeckoViewModuleTest {
             GeckoResult.fromException(RuntimeException("capturePixels failed: GPU crashed"))
 
         mockkObject(GeckoSessionManager)
-        every { GeckoSessionManager.getOrCreateSession(any()) } returns mockk(relaxed = true)
+        every { GeckoSessionManager.getOpenSession(any()) } returns mockk(relaxed = true)
         every { GeckoSessionManager.getView(any()) } returns view
 
         val module = newModule()
@@ -307,7 +310,7 @@ class GeckoViewModuleTest {
         every { view.capturePixels() } returns GeckoResult.fromValue(bitmap)
 
         mockkObject(GeckoSessionManager)
-        every { GeckoSessionManager.getOrCreateSession(any()) } returns mockk(relaxed = true)
+        every { GeckoSessionManager.getOpenSession(any()) } returns mockk(relaxed = true)
         every { GeckoSessionManager.getView(any()) } returns view
 
         val promise: Promise = mockk(relaxed = true)
@@ -349,7 +352,7 @@ class GeckoViewModuleTest {
         )
 
         mockkObject(GeckoSessionManager)
-        every { GeckoSessionManager.getOrCreateSession(any()) } returns mockk(relaxed = true)
+        every { GeckoSessionManager.getOpenSession(any()) } returns mockk(relaxed = true)
         every { GeckoSessionManager.getView(any()) } returns view
 
         val promise: Promise = mockk(relaxed = true)
@@ -400,7 +403,7 @@ class GeckoViewModuleTest {
         every { view.capturePixels() } returns GeckoResult.fromValue(bitmap)
 
         mockkObject(GeckoSessionManager)
-        every { GeckoSessionManager.getOrCreateSession(any()) } returns mockk(relaxed = true)
+        every { GeckoSessionManager.getOpenSession(any()) } returns mockk(relaxed = true)
         every { GeckoSessionManager.getView(any()) } returns view
 
         val promise: Promise = mockk(relaxed = true)
@@ -848,7 +851,7 @@ class GeckoViewModuleTest {
     @Test
     fun `evaluateJavaScript rejects EVAL_BRIDGE_UNAVAILABLE after exhausting retries`() {
         mockkObject(GeckoSessionManager)
-        every { GeckoSessionManager.getOrCreateSession(any()) } returns mockk(relaxed = true)
+        every { GeckoSessionManager.getOpenSession(any()) } returns mockk(relaxed = true)
         mockkObject(GeckoRuntimeManager)
         // No controller at all -> every attempt fails to queue.
         every { GeckoRuntimeManager.getWebExtensionController() } returns null
@@ -871,7 +874,7 @@ class GeckoViewModuleTest {
     @Test
     fun `evaluateJavaScript stops retrying once the bridge accepts the request`() {
         mockkObject(GeckoSessionManager)
-        every { GeckoSessionManager.getOrCreateSession(any()) } returns mockk(relaxed = true)
+        every { GeckoSessionManager.getOpenSession(any()) } returns mockk(relaxed = true)
         mockkObject(GeckoRuntimeManager)
         val controller: WebExtensionController = mockk(relaxed = true)
         // First poll: no port yet (false). Second poll: queued (true) -> the
@@ -892,13 +895,64 @@ class GeckoViewModuleTest {
         verify(exactly = 2) { controller.evaluateJavaScript("session-a", "1+1", promise) }
     }
 
+    @Test
+    fun `evaluateJavaScript on a closed session rejects at once and never rebuilds it`() {
+        // dart-tv's Vimeo tier: stop() calls closeSession while the view stays
+        // mounted, then the progress poll keeps evaluating every 1.5 s. Each
+        // call used to rebuild an unopened orphan session and queue 20 retries.
+        mockkObject(GeckoRuntimeManager)
+        val controller: WebExtensionController = mockk(relaxed = true)
+        every { GeckoRuntimeManager.getRuntime(any()) } returns mockk(relaxed = true)
+        every { GeckoRuntimeManager.getWebExtensionController() } returns controller
+        GeckoSessionManager.setPlaybackAllowed(true)
+        val module = newModule()
+        GeckoSessionManager.getOrCreateSession("vimeo-tier")
+        module.closeSession("vimeo-tier")
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        val promise: Promise = mockk(relaxed = true)
+        module.evaluateJavaScript("vimeo-tier", "player.currentTime", promise)
+
+        // Settled synchronously, before any retry could run.
+        verify(exactly = 1) { promise.reject("EVAL_BRIDGE_UNAVAILABLE", any<String>()) }
+        assertFalse(GeckoSessionManager.getAllSessions().containsKey("vimeo-tier"))
+
+        Shadows.shadowOf(android.os.Looper.getMainLooper())
+            .idleFor(java.time.Duration.ofMillis(EVAL_RETRY_DRAIN_MS))
+        verify(exactly = 0) { controller.evaluateJavaScript(any(), any(), any()) }
+        verify(exactly = 1) { promise.reject(any<String>(), any<String>()) }
+        assertFalse(GeckoSessionManager.getAllSessions().containsKey("vimeo-tier"))
+    }
+
+    @Test
+    fun `ref methods never create a session for a closed or unknown key`() {
+        mockkObject(GeckoSessionManager)
+        every { GeckoSessionManager.getOpenSession(any()) } returns null
+        val module = newModule()
+
+        module.reload("gone")
+        module.goBack("gone")
+        module.goForward("gone")
+        module.stop("gone")
+        module.loadUrl("gone", "https://example.com")
+        module.setUserAgent("gone", "CustomUA/1.0")
+        val promise: Promise = mockk(relaxed = true)
+        module.captureSnapshot("gone", promise)
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        // getOrCreateSession is UI-thread only; on the native-modules thread it
+        // used to build an orphan session whose open() threw.
+        verify(exactly = 0) { GeckoSessionManager.getOrCreateSession(any(), any()) }
+        verify { promise.reject("VIEW_NOT_FOUND", any<String>()) }
+    }
+
     // ========== @ReactMethod navigation passthroughs ==========
 
     @Test
     fun `reload forwards to the session`() {
         mockkObject(GeckoSessionManager)
         val session = TestHelpers.createMockGeckoSession()
-        every { GeckoSessionManager.getOrCreateSession("s") } returns session
+        every { GeckoSessionManager.getOpenSession("s") } returns session
 
         newModule().reload("s")
 
@@ -909,7 +963,7 @@ class GeckoViewModuleTest {
     fun `goBack forwards to the session`() {
         mockkObject(GeckoSessionManager)
         val session = TestHelpers.createMockGeckoSession()
-        every { GeckoSessionManager.getOrCreateSession("s") } returns session
+        every { GeckoSessionManager.getOpenSession("s") } returns session
 
         newModule().goBack("s")
 
@@ -920,7 +974,7 @@ class GeckoViewModuleTest {
     fun `goForward forwards to the session`() {
         mockkObject(GeckoSessionManager)
         val session = TestHelpers.createMockGeckoSession()
-        every { GeckoSessionManager.getOrCreateSession("s") } returns session
+        every { GeckoSessionManager.getOpenSession("s") } returns session
 
         newModule().goForward("s")
 
@@ -931,7 +985,7 @@ class GeckoViewModuleTest {
     fun `stop forwards to the session`() {
         mockkObject(GeckoSessionManager)
         val session = TestHelpers.createMockGeckoSession()
-        every { GeckoSessionManager.getOrCreateSession("s") } returns session
+        every { GeckoSessionManager.getOpenSession("s") } returns session
 
         newModule().stop("s")
 
@@ -942,7 +996,7 @@ class GeckoViewModuleTest {
     fun `loadUrl loads a safe http url`() {
         mockkObject(GeckoSessionManager)
         val session = TestHelpers.createMockGeckoSession()
-        every { GeckoSessionManager.getOrCreateSession("s") } returns session
+        every { GeckoSessionManager.getOpenSession("s") } returns session
 
         newModule().loadUrl("s", "https://example.com")
 
@@ -953,13 +1007,13 @@ class GeckoViewModuleTest {
     fun `loadUrl rejects a javascript url without touching the session`() {
         mockkObject(GeckoSessionManager)
         val session = TestHelpers.createMockGeckoSession()
-        every { GeckoSessionManager.getOrCreateSession(any()) } returns session
+        every { GeckoSessionManager.getOpenSession(any()) } returns session
 
         newModule().loadUrl("s", "javascript:alert(document.cookie)")
 
         verify(exactly = 0) { session.loadUri(any<String>()) }
         // A disallowed scheme must not even resolve a session.
-        verify(exactly = 0) { GeckoSessionManager.getOrCreateSession(any()) }
+        verify(exactly = 0) { GeckoSessionManager.getOpenSession(any()) }
     }
 
     @Test
@@ -968,7 +1022,7 @@ class GeckoViewModuleTest {
         val session = TestHelpers.createMockGeckoSession()
         val settings = mockk<org.mozilla.geckoview.GeckoSessionSettings>(relaxed = true)
         every { session.settings } returns settings
-        every { GeckoSessionManager.getOrCreateSession("s") } returns session
+        every { GeckoSessionManager.getOpenSession("s") } returns session
 
         newModule().setUserAgent("s", "")
 
@@ -982,7 +1036,7 @@ class GeckoViewModuleTest {
         val session = TestHelpers.createMockGeckoSession()
         val settings = mockk<org.mozilla.geckoview.GeckoSessionSettings>(relaxed = true)
         every { session.settings } returns settings
-        every { GeckoSessionManager.getOrCreateSession("s") } returns session
+        every { GeckoSessionManager.getOpenSession("s") } returns session
 
         newModule().setUserAgent("s", "CustomUA/1.0")
 
@@ -1176,6 +1230,7 @@ class GeckoViewModuleTest {
 
         val promise: Promise = mockk(relaxed = true)
         newModule().installWebExtension("spatial_navigation", promise)
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
 
         verify { promise.resolve(null) }
     }
@@ -1192,6 +1247,7 @@ class GeckoViewModuleTest {
 
         val promise: Promise = mockk(relaxed = true)
         newModule().installWebExtension("../evil", promise)
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
 
         verify { promise.reject("INVALID_ASSET_PATH", any<String>()) }
     }
@@ -1208,6 +1264,7 @@ class GeckoViewModuleTest {
 
         val promise: Promise = mockk(relaxed = true)
         newModule().installWebExtension("spatial_navigation", promise)
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
 
         verify { promise.reject("WEB_EXTENSION_INSTALL", any<String>()) }
     }
@@ -1221,6 +1278,7 @@ class GeckoViewModuleTest {
 
         val promise: Promise = mockk(relaxed = true)
         newModule().installWebExtension("spatial_navigation", promise)
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
 
         verify { promise.reject(eq("WEB_EXTENSION_INSTALL"), any<Throwable>()) }
         verify(exactly = 0) { promise.resolve(any()) }
@@ -1234,20 +1292,53 @@ class GeckoViewModuleTest {
 
         val promise: Promise = mockk(relaxed = true)
         newModule().installWebExtension("spatial_navigation", promise)
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
 
         verify { promise.reject("GECKO_RUNTIME", any<String>()) }
+    }
+
+    @Test
+    fun `installWebExtension creates the runtime on the main thread`() {
+        // Called before any GeckoView mounts, getRuntime has to create the
+        // runtime, and GeckoRuntime.create asserts the UI thread.
+        mockkObject(GeckoRuntimeManager)
+        var runtimeThread: Thread? = null
+        every { GeckoRuntimeManager.getRuntime(any()) } answers {
+            runtimeThread = Thread.currentThread()
+            mockk<org.mozilla.geckoview.GeckoRuntime>(relaxed = true)
+        }
+        every { GeckoRuntimeManager.getWebExtensionController() } returns null
+        val module = newModule()
+        val promise: Promise = mockk(relaxed = true)
+
+        val nativeModulesThread = Thread { module.installWebExtension("spatial_navigation", promise) }
+        nativeModulesThread.start()
+        nativeModulesThread.join()
+        verify(exactly = 0) { GeckoRuntimeManager.getRuntime(any()) }
+
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertSame(android.os.Looper.getMainLooper().thread, runtimeThread)
     }
 
     // ========== shutdown / closeSession ==========
 
     @Test
-    fun `shutdown delegates to GeckoRuntimeManager`() {
+    fun `shutdown runs the runtime teardown on the main thread`() {
+        // GeckoRuntimeManager.shutdown closes sessions, and GeckoSession.close
+        // asserts the UI thread; React calls shutdown on the native-modules thread.
         mockkObject(GeckoRuntimeManager)
-        every { GeckoRuntimeManager.shutdown() } returns Unit
+        var shutdownThread: Thread? = null
+        every { GeckoRuntimeManager.shutdown() } answers { shutdownThread = Thread.currentThread() }
+        val module = newModule()
 
-        newModule().shutdown()
+        val nativeModulesThread = Thread { module.shutdown() }
+        nativeModulesThread.start()
+        nativeModulesThread.join()
+        verify(exactly = 0) { GeckoRuntimeManager.shutdown() }
 
-        verify { GeckoRuntimeManager.shutdown() }
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        verify(exactly = 1) { GeckoRuntimeManager.shutdown() }
+        assertSame(android.os.Looper.getMainLooper().thread, shutdownThread)
     }
 
     @Test
@@ -1345,7 +1436,7 @@ class GeckoViewModuleTest {
         every { view.capturePixels() } returns GeckoResult.fromValue(bitmap)
 
         mockkObject(GeckoSessionManager)
-        every { GeckoSessionManager.getOrCreateSession(any()) } returns mockk(relaxed = true)
+        every { GeckoSessionManager.getOpenSession(any()) } returns mockk(relaxed = true)
         every { GeckoSessionManager.getView(any()) } returns view
 
         val module = newModule()
