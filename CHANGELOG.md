@@ -24,6 +24,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Migrate tests to awaited Testing Library 14 operations and verify both native
   build variants alongside standalone library and example checks.
 
+### Review fixes
+
+- Confine session and runtime lifecycle to the UI thread, and close sessions
+  before taking the runtime lock in `shutdown`, so the two managers always
+  lock in the same order. Ref methods no longer rebuild a closed session:
+  void methods do nothing, `evaluateJavaScript` rejects with
+  `EVAL_BRIDGE_UNAVAILABLE` at once, and `captureSnapshot` rejects.
+- Autoplay and EME defaults now take effect. The `--setpref=` runtime
+  arguments were never a Gecko switch; the prefs are set through
+  `GeckoPreferenceController`, so autoplay and DRM stay blocked unless the
+  host opts in with `configureGeckoViewSecurity` before the first view mounts.
+- Release audio focus when a playing view or its session is torn down.
+- Capture snapshots on the UI thread.
+- Resolve alert, confirm and text prompts with GeckoView 159's typed API, so
+  `resolvePrompt` completes them instead of leaving the page blocked.
+- Ask before a page opens the maps app (`geo:` and maps links), as `intent:`
+  and `market:` already did.
+- Reject evaluations in flight with `PLAYBACK_RESTRICTED` when the playback
+  gate closes, and scope a bridge disconnect to its own port.
+- CI: install the Android SDK command-line tools on ubuntu-26.04 runners,
+  give jobs a read-only token, and audit the library's shipped dependencies.
+
 ### Security
 
 Security audit and hardening pass. 24 findings across 5 severity tiers

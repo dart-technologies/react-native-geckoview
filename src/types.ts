@@ -99,7 +99,11 @@ export interface GeckoViewProps extends ViewProps {
     handleAudioFocus?: boolean;
     /** Enables Gecko's built-in content blocking (tracking protection). */
     contentBlockingEnabled?: boolean;
-    /** Cookie banner auto-handling mode. Defaults to `'reject'`. */
+    /**
+     * Cookie banner auto-handling mode. GeckoView 159 removed the cookie-banner
+     * API, so `'reject'` and `'accept'` are logged as unsupported and change
+     * nothing; omitted or `'none'` leaves banners to the page.
+     */
     cookieBannerMode?: 'reject' | 'accept' | 'none';
     /**
      * Use a desktop user-agent and viewport instead of mobile. Defaults to
@@ -189,8 +193,13 @@ export interface GeckoViewRef {
      * **Security:** the code runs in the bridge content-script context, with
      * DOM access but **without page-script globals** (a function/variable
      * defined by the page's own scripts is not visible here). Never evaluate
-     * untrusted or user-provided strings. Rejects with `EVAL_BRIDGE_UNAVAILABLE`
-     * if the bridge content script has not connected within the retry window.
+     * untrusted or user-provided strings. Rejects with:
+     * - `EVAL_BRIDGE_UNAVAILABLE` if the session is closed, or the bridge
+     *   content script has not connected within the retry window;
+     * - `PLAYBACK_RESTRICTED` while the host's playback gate is closed (AAOS UX
+     *   restrictions), including evaluations in flight when it closes;
+     * - `EVAL_TIMEOUT` if the page does not answer in time;
+     * - `EVAL_ERROR` if the script throws.
      *
      * @typeParam T  Expected return type; annotate to avoid casting at the call
      *   site (the value is still produced by the native bridge, not validated).
