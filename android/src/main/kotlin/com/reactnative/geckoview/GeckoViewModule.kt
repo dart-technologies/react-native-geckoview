@@ -142,6 +142,16 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     @ReactMethod
     fun resolvePrompt(promptId: String, confirm: Boolean, text: String?, username: String?, password: String?) {
+        // GeckoView 159's prompt answers are @UiThread, and completing one edits
+        // the session's prompt storage, which the UI thread also changes.
+        if (UiThreadUtil.isOnUiThread()) {
+            resolvePromptOnUiThread(promptId, confirm, text, username, password)
+        } else {
+            UiThreadUtil.runOnUiThread { resolvePromptOnUiThread(promptId, confirm, text, username, password) }
+        }
+    }
+
+    private fun resolvePromptOnUiThread(promptId: String, confirm: Boolean, text: String?, username: String?, password: String?) {
         cancelTimeout(promptId)
         val pending = pendingPrompts.remove(promptId) ?: return
         val response = try {

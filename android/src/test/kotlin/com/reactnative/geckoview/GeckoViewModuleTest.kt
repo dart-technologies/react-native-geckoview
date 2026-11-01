@@ -722,6 +722,27 @@ class GeckoViewModuleTest {
     }
 
     @Test
+    fun `resolvePrompt from the native-modules thread answers on the UI thread`() {
+        val response: GeckoSession.PromptDelegate.PromptResponse = mockk(relaxed = true)
+        val prompt: GeckoSession.PromptDelegate.AlertPrompt = mockk(relaxed = true)
+        every { prompt.dismiss() } returns response
+        val result: GeckoResult<Any> = mockk(relaxed = true)
+
+        val module = newModule()
+        module.storePendingPrompt("p-alert-worker", prompt, result)
+        val worker = Thread {
+            module.resolvePrompt("p-alert-worker", confirm = true, text = null, username = null, password = null)
+        }
+        worker.start()
+        worker.join()
+
+        verify(exactly = 0) { prompt.dismiss() }
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        verify(exactly = 1) { prompt.dismiss() }
+        verify(exactly = 1) { result.complete(response) }
+    }
+
+    @Test
     fun `resolvePrompt answers a ButtonPrompt with the POSITIVE or NEGATIVE type`() {
         val positive: GeckoSession.PromptDelegate.PromptResponse = mockk(relaxed = true)
         val negative: GeckoSession.PromptDelegate.PromptResponse = mockk(relaxed = true)
