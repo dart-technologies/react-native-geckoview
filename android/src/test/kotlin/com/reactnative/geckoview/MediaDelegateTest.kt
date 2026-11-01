@@ -119,6 +119,40 @@ class MediaDelegateTest {
         verify(exactly = 2) { module.sendViewEvent(testViewId, "onMediaSessionAction", any()) }
     }
 
+    // --- Teardown (Codex F2) ---
+
+    @Test
+    fun `release abandons the focus taken for active playback`() {
+        mediaDelegate = MediaDelegate(context, module, true, testViewId)
+        mediaDelegate.onPlay(session, mediaSession)
+
+        // The owning view or session goes away while the page is still playing.
+        mediaDelegate.release()
+
+        verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+    }
+
+    @Test
+    fun `release abandons the request only once`() {
+        mediaDelegate = MediaDelegate(context, module, true, testViewId)
+        mediaDelegate.onPlay(session, mediaSession)
+
+        mediaDelegate.release()
+        mediaDelegate.release()
+
+        verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+    }
+
+    @Test
+    fun `release leaves audio focus alone when the host manages it`() {
+        mediaDelegate = MediaDelegate(context, module, false, testViewId)
+        mediaDelegate.onPlay(session, mediaSession)
+
+        mediaDelegate.release()
+
+        verify(exactly = 0) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+    }
+
     // --- Event emission regardless of focus handling ---
 
     @Test

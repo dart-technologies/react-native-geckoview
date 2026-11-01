@@ -99,6 +99,7 @@ object GeckoSessionManager {
         openedSessionKeys.remove(key)
         sessions.remove(key)?.let { session ->
             views.remove(session)
+            releaseAudioFocus(session)
             session.close()
         }
     }
@@ -108,6 +109,7 @@ object GeckoSessionManager {
     fun closeAllSessions() {
         sessions.values.forEach { session ->
             try {
+                releaseAudioFocus(session)
                 session.close()
             } catch (e: Throwable) {
                 GeckoLog.w(TAG, "Failed to close session", e)
@@ -116,6 +118,15 @@ object GeckoSessionManager {
         sessions.clear()
         openedSessionKeys.clear()
         views.clear()
+    }
+
+    /** A page playing when its session closes never reports onPause/onStop. */
+    private fun releaseAudioFocus(session: GeckoSession) {
+        try {
+            (session.mediaSessionDelegate as? MediaDelegate)?.release()
+        } catch (e: Exception) {
+            GeckoLog.w(TAG, "Failed to release audio focus", e)
+        }
     }
 
     private fun ensureSessionOpen(key: String, session: GeckoSession) {

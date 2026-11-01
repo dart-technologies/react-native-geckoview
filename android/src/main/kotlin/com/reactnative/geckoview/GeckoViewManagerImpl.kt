@@ -176,6 +176,9 @@ class GeckoViewManagerImpl {
                 session.permissionDelegate = null
                 session.progressDelegate = null
                 session.contentDelegate = null
+                // Abandon audio focus taken during playback before the delegate
+                // that holds the AudioFocusRequest is detached for good.
+                (session.mediaSessionDelegate as? MediaDelegate)?.release()
                 session.mediaSessionDelegate = null
             }
             view.releaseSession()

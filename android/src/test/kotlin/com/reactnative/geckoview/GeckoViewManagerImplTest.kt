@@ -29,6 +29,7 @@ class GeckoViewManagerImplTest {
     private lateinit var geckoView: GeckoView
     private lateinit var session: GeckoSession
     private lateinit var module: GeckoViewModule
+    private lateinit var audioManager: android.media.AudioManager
 
     @Before
     fun setUp() {
@@ -43,7 +44,7 @@ class GeckoViewManagerImplTest {
         every { context.getNativeModule(GeckoViewModule::class.java) } returns module
         
         // Mock AudioManager for MediaDelegate
-        val audioManager = mockk<android.media.AudioManager>(relaxed = true)
+        audioManager = mockk(relaxed = true)
         every { context.getSystemService(android.content.Context.AUDIO_SERVICE) } returns audioManager
         
         every { geckoView.context } returns context
@@ -278,6 +279,33 @@ class GeckoViewManagerImplTest {
         verify { session.contentDelegate = null }
         verify { session.mediaSessionDelegate = null }
         verify { geckoView.releaseSession() }
+    }
+
+    @Test
+    fun `onDropViewInstance abandons audio focus taken during playback`() {
+        TestHelpers.mockArguments()
+        try {
+            var attached: org.mozilla.geckoview.MediaSession.Delegate? = null
+            every { session.mediaSessionDelegate = any() } answers { attached = firstArg() }
+            every { session.mediaSessionDelegate } answers { attached }
+            every { geckoView.session } returns null
+            manager.setHandleAudioFocus(geckoView, true)
+            manager.setSessionKey(geckoView, "playing")
+
+            // The page starts playback: the view's MediaDelegate takes audio focus.
+            val delegate = attached as MediaDelegate
+            delegate.onPlay(session, mockk(relaxed = true))
+            verify(exactly = 1) { audioManager.requestAudioFocus(any<android.media.AudioFocusRequest>()) }
+
+            // The view is dropped mid-playback; no onPause/onStop will follow.
+            every { geckoView.session } returns session
+            manager.onDropViewInstance(geckoView)
+
+            verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<android.media.AudioFocusRequest>()) }
+            verify { session.mediaSessionDelegate = null }
+        } finally {
+            TestHelpers.unmockArguments()
+        }
     }
 
     @Test

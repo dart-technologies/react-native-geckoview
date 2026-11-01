@@ -127,6 +127,20 @@ class MediaDelegate(
         module.sendViewEvent(viewId, "onMediaSessionAction", params)
     }
 
+    /**
+     * Give up audio focus and forget the active media session. Called when the
+     * view or session that owns this delegate goes away mid-playback: no
+     * onPause/onStop is guaranteed to arrive afterwards, so focus taken in
+     * [onPlay] would otherwise be held until the process dies.
+     */
+    fun release() {
+        activeMediaSession = null
+        if (handleAudioFocus) {
+            abandonAudioFocus()
+        }
+        focusRequest = null
+    }
+
     private fun requestAudioFocus() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             // Abandon any existing request to prevent leaks

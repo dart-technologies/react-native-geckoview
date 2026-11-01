@@ -450,6 +450,24 @@ class GeckoSessionManagerTest {
     }
 
     @Test
+    fun `closing sessions mid-playback releases the audio focus their delegates hold`() {
+        // closeSession (dart-tv's stop path) and a UX restriction both close a
+        // session whose page may still be playing; no onPause/onStop follows.
+        val released = GeckoSessionManager.getOrCreateSession("released-while-playing")
+        val releasedDelegate = mockk<MediaDelegate>(relaxed = true)
+        released.mediaSessionDelegate = releasedDelegate
+        val restricted = GeckoSessionManager.getOrCreateSession("restricted-while-playing")
+        val restrictedDelegate = mockk<MediaDelegate>(relaxed = true)
+        restricted.mediaSessionDelegate = restrictedDelegate
+
+        GeckoSessionManager.releaseSession("released-while-playing")
+        verify(exactly = 1) { releasedDelegate.release() }
+
+        GeckoSessionManager.closeAllSessions()
+        verify(exactly = 1) { restrictedDelegate.release() }
+    }
+
+    @Test
     fun `a restriction removes all view associations without relying on GC or JS`() {
         val session = GeckoSessionManager.getOrCreateSession("restricted")
         val view = mockk<org.mozilla.geckoview.GeckoView>(relaxed = true)
