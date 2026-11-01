@@ -134,10 +134,13 @@ class GeckoViewModuleTest {
         assertEquals("GeckoViewModule", newModule().name)
     }
 
+    /** Snapshot encoding runs inline so tests settle deterministically. */
+    private val inlineExecutor = java.util.concurrent.Executor { it.run() }
+
     private fun newModule(): GeckoViewModule {
         val ctx: ReactApplicationContext = mockk(relaxed = true)
         every { ctx.applicationContext } returns ctx
-        return GeckoViewModule(ctx)
+        return GeckoViewModule(ctx).apply { snapshotExecutor = inlineExecutor }
     }
 
     /**
@@ -154,7 +157,7 @@ class GeckoViewModuleTest {
         val ctx: ReactApplicationContext = mockk(relaxed = true)
         every { ctx.applicationContext } returns ctx
         every { ctx.noBackupFilesDir } returns dir
-        return GeckoViewModule(ctx) to dir
+        return GeckoViewModule(ctx).apply { snapshotExecutor = inlineExecutor } to dir
     }
 
     @Test
@@ -300,10 +303,13 @@ class GeckoViewModuleTest {
     }
 
     @Test
-    fun `captureSnapshot captures and settles on the main thread`() {
+    fun `captureSnapshot captures on the main thread and encodes off it`() {
         // React calls captureSnapshot on the native-modules thread, but GeckoView's
-        // ScreenshotBuilder.capture() asserts the UI thread (self-review M3).
+        // ScreenshotBuilder.capture() asserts the UI thread (self-review M3). The
+        // PNG encode and file write then leave the UI thread (Codex round 2).
         val (module, dir) = newModuleWithRealFilesDir()
+        val queued = mutableListOf<Runnable>()
+        module.snapshotExecutor = java.util.concurrent.Executor { queued += it }
         val bitmap = android.graphics.Bitmap.createBitmap(
             16, 16, android.graphics.Bitmap.Config.ARGB_8888
         )
@@ -331,7 +337,13 @@ class GeckoViewModuleTest {
 
         val mainThread = android.os.Looper.getMainLooper().thread
         assertSame(mainThread, captureThread)
-        assertSame(mainThread, settledThread)
+        assertEquals(1, queued.size)
+        verify(exactly = 0) { promise.resolve(any()) }
+
+        val snapshotThread = Thread { queued.single().run() }
+        snapshotThread.start()
+        snapshotThread.join()
+        assertSame(snapshotThread, settledThread)
         dir.deleteRecursively()
     }
 

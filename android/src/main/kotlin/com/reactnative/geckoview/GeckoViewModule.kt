@@ -33,6 +33,11 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
     private val pendingPermissions: MutableMap<String, GeckoResult<Int>> =
         Collections.synchronizedMap(mutableMapOf())
     private val timeoutHandler = Handler(Looper.getMainLooper())
+    // A capture must run on the UI thread; its PNG encoding and file I/O must not.
+    internal var snapshotExecutor: java.util.concurrent.Executor =
+        java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "GeckoViewSnapshot").apply { isDaemon = true }
+        }
     private val timeoutRunnables: MutableMap<String, Runnable> =
         Collections.synchronizedMap(mutableMapOf())
     // Snapshots are tracked per-session so closeSession only removes its own
@@ -365,39 +370,21 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                     promise.reject("SNAPSHOT_ERROR", "Failed to capture snapshot: Bitmap is null")
                     return@then GeckoResult.fromValue(null)
                 }
-                // `try { ... } finally { recycle }` — every exit path (success,
-                // SNAPSHOT_TOO_LARGE rejection, file-save catch) must release
-                // the native bitmap pixels promptly rather than waiting for GC.
-                try {
-                    if (bitmap.width.toLong() * bitmap.height.toLong() > maxPixels) {
-                        promise.reject(
-                            "SNAPSHOT_TOO_LARGE",
-                            "Snapshot exceeds $maxPixels pixels (${bitmap.width}x${bitmap.height})"
-                        )
-                        return@then GeckoResult.fromValue(null)
-                    }
-                    try {
-                        // `noBackupFilesDir` keeps the PNG out of Android auto-backup,
-                        // so page screenshots don't sync to cloud even if the host app
-                        // enables `allowBackup`. `deleteOnExit` + TTL eviction limits
-                        // disk residency.
-                        val dir = java.io.File(reactApplicationContext.noBackupFilesDir, "geckoview_snapshots")
-                        dir.mkdirs()
-                        evictStaleSnapshots(dir)
-                        val file = java.io.File.createTempFile("snapshot", ".png", dir)
-                        file.deleteOnExit()
-                        java.io.FileOutputStream(file).use { stream ->
-                            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
-                        }
-                        synchronized(snapshotsLock) {
-                            snapshotsBySession.getOrPut(sessionKey) { mutableSetOf() }.add(file)
-                        }
-                        promise.resolve(file.absolutePath)
-                    } catch (e: Exception) {
-                        promise.reject("SNAPSHOT_ERROR", "Error saving snapshot: ${e.message}")
-                    }
-                } finally {
+                if (bitmap.width.toLong() * bitmap.height.toLong() > maxPixels) {
                     bitmap.recycle()
+                    promise.reject(
+                        "SNAPSHOT_TOO_LARGE",
+                        "Snapshot exceeds $maxPixels pixels (${bitmap.width}x${bitmap.height})"
+                    )
+                    return@then GeckoResult.fromValue(null)
+                }
+                // This continuation runs on the UI thread; encoding a full-screen
+                // PNG and writing it would block input and rendering there.
+                try {
+                    snapshotExecutor.execute { saveSnapshot(bitmap, sessionKey, promise) }
+                } catch (e: Exception) {
+                    bitmap.recycle()
+                    promise.reject("SNAPSHOT_ERROR", "Error saving snapshot: ${e.message}")
                 }
                 GeckoResult.fromValue(null)
             },
@@ -412,6 +399,34 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                 GeckoResult.fromValue(null)
             },
         )
+    }
+
+    /** Encodes and stores a captured bitmap on [snapshotExecutor], then settles the promise. */
+    private fun saveSnapshot(bitmap: android.graphics.Bitmap, sessionKey: String, promise: Promise) {
+        // `try { ... } finally { recycle }`: every exit path must release the
+        // native bitmap pixels promptly rather than waiting for GC.
+        try {
+            // `noBackupFilesDir` keeps the PNG out of Android auto-backup,
+            // so page screenshots don't sync to cloud even if the host app
+            // enables `allowBackup`. `deleteOnExit` + TTL eviction limits
+            // disk residency.
+            val dir = java.io.File(reactApplicationContext.noBackupFilesDir, "geckoview_snapshots")
+            dir.mkdirs()
+            evictStaleSnapshots(dir)
+            val file = java.io.File.createTempFile("snapshot", ".png", dir)
+            file.deleteOnExit()
+            java.io.FileOutputStream(file).use { stream ->
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+            }
+            synchronized(snapshotsLock) {
+                snapshotsBySession.getOrPut(sessionKey) { mutableSetOf() }.add(file)
+            }
+            promise.resolve(file.absolutePath)
+        } catch (e: Exception) {
+            promise.reject("SNAPSHOT_ERROR", "Error saving snapshot: ${e.message}")
+        } finally {
+            bitmap.recycle()
+        }
     }
 
     @ReactMethod
