@@ -255,10 +255,23 @@ Set `allowDrm` only when the app needs Encrypted Media Extensions. Set
 only affects debug builds; release builds keep page console output out of
 logcat.
 
+When the runtime starts, the library sets these Gecko prefs through GeckoView's
+`GeckoPreferenceController` (default branch, re-applied on every launch):
+
+| Pref | Default | With opt-in |
+|---|---|---|
+| `media.autoplay.default` | `5` (block audible and inaudible) | `0` with `allowAutoplay` |
+| `media.geckoview.autoplay.request` | `true` (blocked autoplay reaches `onPermissionRequest` as `autoplay_audible` / `autoplay_inaudible`) | `false` with `allowAutoplay` |
+| `media.eme.enabled` | `false` | `true` with `allowDrm` |
+
+Gecko has no command-line pref switch, so earlier builds that passed these as
+`--setpref=` runtime arguments never applied them.
+
 ### Content-process sandbox
 
 All builds run with GeckoView's default content-process sandbox. The library
-does not set `--no-sandbox` or `--disable-gpu-sandbox`.
+passes no command-line arguments to Gecko, so no sandbox-disabling switch can
+reach it.
 
 Do NOT add sandbox-disable flags without understanding the trade-off: removing
 the sandbox means any Gecko RCE gains full app-context code execution.

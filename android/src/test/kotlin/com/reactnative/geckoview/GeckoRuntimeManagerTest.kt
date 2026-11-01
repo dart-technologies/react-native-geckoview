@@ -5,6 +5,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.mockkStatic
+import io.mockk.slot
 import io.mockk.unmockkAll
 import io.mockk.verify
 import org.junit.After
@@ -16,9 +17,12 @@ import org.junit.Assert.assertSame
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mozilla.geckoview.GeckoPreferenceController
+import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -39,6 +43,10 @@ class GeckoRuntimeManagerTest {
         // Mock static creation of GeckoRuntime
         mockkStatic(GeckoRuntime::class)
         every { GeckoRuntime.create(any(), any()) } returns mockRuntime
+
+        // Runtime prefs go to Gecko through this static API; capture instead.
+        mockkStatic(GeckoPreferenceController::class)
+        every { GeckoPreferenceController.setGeckoPrefs(any()) } returns GeckoResult<Map<String, Boolean>>()
         
         // Ensure we start fresh
         GeckoRuntimeManager.shutdown()
@@ -118,52 +126,93 @@ class GeckoRuntimeManagerTest {
         assertNotNull(GeckoRuntimeManager.getWebExtensionController())
     }
 
+    // ========== Runtime prefs (self-review M2) ==========
+    //
+    // These used to be `--setpref=` runtime arguments. Gecko has no such switch,
+    // so autoplay and EME were never blocked. The tests below assert the prefs
+    // GeckoPreferenceController receives when the runtime starts.
+
+    private fun appliedPrefs(): Map<String, GeckoPreferenceController.SetGeckoPreference<*>> {
+        val applied = slot<List<GeckoPreferenceController.SetGeckoPreference<*>>>()
+        verify(exactly = 1) { GeckoPreferenceController.setGeckoPrefs(capture(applied)) }
+        return applied.captured.associateBy { it.pref }
+    }
+
     @Test
-    fun `runtime arguments never disable extension signature verification`() {
-        val args = GeckoRuntimeManager.buildRuntimeArguments()
-        val banned = listOf(
-            "--setpref=xpinstall.signatures.required=false",
-            "--setpref=extensions.install.requireSecureOrigin=false",
-        )
-        for (pref in banned) {
-            assert(pref !in args) { "Dangerous pref must not be present: $pref" }
+    fun `runtime start blocks autoplay and EME by default through Gecko prefs`() {
+        GeckoRuntimeManager.getRuntime(context)
+
+        val prefs = appliedPrefs()
+        assertEquals("Autoplay must default to BLOCKED (5)", 5, prefs.getValue("media.autoplay.default").value)
+        assertEquals(true, prefs.getValue("media.geckoview.autoplay.request").value)
+        assertEquals("DRM/EME must be disabled by default", false, prefs.getValue("media.eme.enabled").value)
+        prefs.values.forEach {
+            assertEquals(GeckoPreferenceController.PREF_BRANCH_DEFAULT, it.branch)
         }
     }
 
     @Test
-    fun `runtime arguments default autoplay to blocked`() {
-        val args = GeckoRuntimeManager.buildRuntimeArguments()
-        assert("--setpref=media.autoplay.default=5" in args) {
-            "Autoplay must default to BLOCKED (5); got args=${args.toList()}"
-        }
-        assert("--setpref=media.autoplay.enabled=true" !in args) {
-            "The unconditional enable-autoplay override must not be present"
+    fun `runtime start applies explicit DRM and autoplay opt-ins`() {
+        GeckoRuntimeManager.configureSecurity(GeckoSecurityConfig.Options(allowDrm = true, allowAutoplay = true))
+
+        GeckoRuntimeManager.getRuntime(context)
+
+        val prefs = appliedPrefs()
+        assertEquals(0, prefs.getValue("media.autoplay.default").value)
+        assertEquals(false, prefs.getValue("media.geckoview.autoplay.request").value)
+        assertEquals(true, prefs.getValue("media.eme.enabled").value)
+    }
+
+    @Test
+    fun `runtime prefs are applied once per runtime`() {
+        GeckoRuntimeManager.getRuntime(context)
+        GeckoRuntimeManager.getRuntime(context)
+
+        verify(exactly = 1) { GeckoPreferenceController.setGeckoPrefs(any()) }
+    }
+
+    @Test
+    fun `runtime passes no command-line arguments`() {
+        // Gecko takes neither pref nor sandbox switches on its command line.
+        val settings = slot<GeckoRuntimeSettings>()
+        every { GeckoRuntime.create(any(), capture(settings)) } returns mockRuntime
+
+        GeckoRuntimeManager.getRuntime(context)
+
+        assertEquals(0, settings.captured.arguments.size)
+    }
+
+    @Test
+    fun `runtime prefs never weaken extension signature checks`() {
+        for (options in listOf(
+            GeckoSecurityConfig.Options(),
+            GeckoSecurityConfig.Options(allowDrm = true, allowAutoplay = true),
+        )) {
+            val prefs = GeckoRuntimeManager.runtimePrefs(options)
+            assertFalse(prefs.containsKey("xpinstall.signatures.required"))
+            assertFalse(prefs.containsKey("extensions.install.requireSecureOrigin"))
+            assertFalse(prefs.containsKey("media.autoplay.enabled"))
         }
     }
 
     @Test
-    fun `runtime arguments default EME to disabled`() {
-        val args = GeckoRuntimeManager.buildRuntimeArguments()
-        assert("--setpref=media.eme.enabled=false" in args) {
-            "DRM/EME must be disabled by default; got args=${args.toList()}"
-        }
+    fun `a failed pref request does not break runtime start`() {
+        every { GeckoPreferenceController.setGeckoPrefs(any()) } returns
+            GeckoResult.fromException<Map<String, Boolean>>(IllegalStateException("prefs unavailable"))
+
+        val runtime = GeckoRuntimeManager.getRuntime(context)
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        assertSame(mockRuntime, runtime)
+        assertNotNull(GeckoRuntimeManager.getWebExtensionController())
     }
 
     @Test
-    fun `runtime arguments allow explicit DRM and autoplay opt-in`() {
-        val args = GeckoRuntimeManager.buildRuntimeArguments(
-            GeckoSecurityConfig.Options(allowDrm = true, allowAutoplay = true)
-        )
-        assert("--setpref=media.eme.enabled=true" in args)
-        assert("--setpref=media.autoplay.default=0" in args)
-        assert("--setpref=media.geckoview.autoplay.request=false" in args)
-    }
+    fun `a throwing pref request does not break runtime start`() {
+        every { GeckoPreferenceController.setGeckoPrefs(any()) } throws IllegalThreadStateException("no looper")
 
-    @Test
-    fun `runtime arguments never disable sandbox`() {
-        val args = GeckoRuntimeManager.buildRuntimeArguments()
-        assert("--no-sandbox" !in args) { "No build must ship with --no-sandbox" }
-        assert("--disable-gpu-sandbox" !in args) { "No build must ship with --disable-gpu-sandbox" }
+        assertSame(mockRuntime, GeckoRuntimeManager.getRuntime(context))
+        assertNotNull(GeckoRuntimeManager.getWebExtensionController())
     }
 
     @Test

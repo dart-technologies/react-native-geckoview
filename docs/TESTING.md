@@ -22,8 +22,9 @@ totals.
 
 Kotlin suite runs under both `testDebugUnitTest` and `testReleaseUnitTest`
 — the release-variant pass enforces the runtime-config regression guards
-(sandbox flags absent, signature verification enabled, autoplay default
-blocked). Both variants must pass before shipping.
+(no runtime arguments, signature verification enabled, autoplay and EME
+blocked by default through Gecko prefs). Both variants must pass before
+shipping.
 
 ## Running Tests
 
@@ -100,7 +101,7 @@ describe('Feature Tests', () => {
 | `ContentBlockingControllerTest.kt` | ETP + cookie-banner mapping; fail-fast on invalid input; `setCookieBannerMode` propagates underlying GeckoView exceptions |
 | `CookieBannerTest.kt` | Cookie banner mode strings |
 | `GeckoLogTest.kt` | Pins the `GeckoLog` symbol + signature |
-| `GeckoRuntimeManagerTest.kt` | Runtime lifecycle; `shutdown` lock order against `GeckoSessionManager`; **runtime-arg banned-flag assertions + `configureSecurity → autoGrantDrm/Autoplay` propagation (security guard)** |
+| `GeckoRuntimeManagerTest.kt` | Runtime lifecycle; `shutdown` lock order against `GeckoSessionManager`; **runtime-pref assertions (autoplay/EME blocked by default via `GeckoPreferenceController`, no signature-weakening prefs, no runtime arguments) + `configureSecurity → autoGrantDrm/Autoplay` propagation (security guard)** |
 | `GeckoSecurityConfigTest.kt` | Pins `GeckoSecurityConfig.set()` propagation to the permission delegate |
 | `GeckoSessionManagerTest.kt` | Session pooling + concurrency stress (ConcurrentModificationException regression); UI-thread-only session creation; `init` never reopens pooled sessions |
 | `GeckoViewContentDelegateTest.kt` | Title / focus-exit events |

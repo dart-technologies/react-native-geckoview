@@ -2,6 +2,8 @@ package com.reactnative.geckoview
 
 import android.content.Context
 import org.mozilla.geckoview.AllowOrDeny
+import org.mozilla.geckoview.ExperimentalGeckoViewApi
+import org.mozilla.geckoview.GeckoPreferenceController
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
@@ -48,11 +50,11 @@ object GeckoRuntimeManager {
         if (runtime == null) {
             val securityOptions = GeckoSecurityConfig.current()
             val settings = GeckoRuntimeSettings.Builder()
-                .arguments(buildRuntimeArguments(securityOptions))
                 .consoleOutput(BuildConfig.DEBUG && securityOptions.enableConsoleOutput)
                 .build()
 
             runtime = GeckoRuntime.create(context.applicationContext, settings)
+            applyRuntimePrefs(securityOptions)
             applyDefaultContentBlockingSettings(runtime!!)
             installExtensionPromptDelegate(runtime!!)
             // GeckoView 150+: child process is no longer started eagerly in the
@@ -72,33 +74,64 @@ object GeckoRuntimeManager {
     }
 
     /**
-     * Runtime arguments for the Gecko content process.
+     * Gecko prefs carrying the host's media opt-ins: autoplay and EME stay
+     * blocked unless [GeckoSecurityConfig.Options] opts in before runtime init.
      *
-     * Sandbox-disabling flags are never set. They collapse Firefox's primary
-     * containment for web-content exploits — every Gecko vulnerability would
-     * land with full app-context privileges.
+     * GeckoView 159 has no typed setting for these, and Gecko has no
+     * command-line pref switch: the `--setpref=` runtime arguments used before
+     * never took effect. [applyRuntimePrefs] sets them through
+     * [GeckoPreferenceController].
      *
-     * Removed pref overrides:
-     *   - `xpinstall.signatures.required=false` — would allow unsigned
-     *     extensions to install through any surface. `installBuiltIn` used by
-     *     [WebExtensionController.installExtension] already bypasses the
-     *     signature check for APK-packed extensions via the resource:// URI,
-     *     so the global override was unnecessary and dangerous.
-     *   - `extensions.install.requireSecureOrigin=false` — would let an http
-     *     page offer a WebExtension install.
-     *   - `media.autoplay.enabled=true` — defaulting autoplay to BLOCKED (5)
-     *     is the safer behavior; host apps can opt in before runtime init.
+     * Never add `xpinstall.signatures.required=false` (unsigned extensions
+     * could install through any surface; `installBuiltIn` already covers
+     * APK-packed ones) or `extensions.install.requireSecureOrigin=false` (an
+     * http page could offer an install). No sandbox-disabling switch exists or
+     * is passed.
      */
-    internal fun buildRuntimeArguments(
+    internal fun runtimePrefs(
         options: GeckoSecurityConfig.Options = GeckoSecurityConfig.current()
-    ): Array<String> {
-        val args = mutableListOf(
-            "--disable-features=VizDisplayCompositor",
-            "--setpref=media.autoplay.default=${if (options.allowAutoplay) 0 else 5}",
-            "--setpref=media.geckoview.autoplay.request=${if (options.allowAutoplay) "false" else "true"}",
-            "--setpref=media.eme.enabled=${if (options.allowDrm) "true" else "false"}",
-        )
-        return args.toTypedArray()
+    ): Map<String, Any> = linkedMapOf(
+        // 5 blocks audible and inaudible autoplay; 0 allows both.
+        "media.autoplay.default" to (if (options.allowAutoplay) 0 else 5),
+        // While blocked, autoplay is routed to GeckoViewPermissionDelegate as a request.
+        "media.geckoview.autoplay.request" to !options.allowAutoplay,
+        "media.eme.enabled" to options.allowDrm,
+    )
+
+    /**
+     * Applies [runtimePrefs] on the default branch, the branch GeckoView uses
+     * for its own runtime settings: nothing persists in the profile, so each
+     * launch applies the current configuration. The request waits in Gecko's
+     * global event queue until the Gecko thread reaches RUNNING.
+     * GeckoPreferenceController is public but marked experimental in 159.
+     */
+    @androidx.annotation.OptIn(ExperimentalGeckoViewApi::class)
+    private fun applyRuntimePrefs(options: GeckoSecurityConfig.Options) {
+        try {
+            val prefs: List<GeckoPreferenceController.SetGeckoPreference<*>> =
+                runtimePrefs(options).map { (name, value) ->
+                    when (value) {
+                        is Int -> GeckoPreferenceController.SetGeckoPreference.setIntPref(
+                            name, value, GeckoPreferenceController.PREF_BRANCH_DEFAULT
+                        )
+                        is Boolean -> GeckoPreferenceController.SetGeckoPreference.setBoolPref(
+                            name, value, GeckoPreferenceController.PREF_BRANCH_DEFAULT
+                        )
+                        else -> throw IllegalArgumentException("Unsupported pref type for $name")
+                    }
+                }
+            // Both outcomes are consumed: an unhandled failure would surface as
+            // GeckoResult.UncaughtException on the UI thread.
+            GeckoPreferenceController.setGeckoPrefs(prefs).accept(
+                { applied ->
+                    val rejected = applied?.filterValues { it != true }?.keys.orEmpty()
+                    if (rejected.isNotEmpty()) GeckoLog.w(TAG, "Gecko rejected runtime prefs: $rejected")
+                },
+                { e -> GeckoLog.w(TAG, "Failed to apply runtime prefs", e) },
+            )
+        } catch (e: Throwable) {
+            GeckoLog.w(TAG, "Failed to apply runtime prefs", e)
+        }
     }
 
     /**
