@@ -165,9 +165,10 @@ class WebExtensionController(private val runtime: GeckoRuntime) {
             true
         } catch (e: Throwable) {
             timeoutHandler.removeCallbacks(timeout)
-            pendingEval.remove(requestId)
             GeckoLog.e(TAG, "Failed to send eval request to bridge", e)
-            false
+            // Already gone means a concurrent rejection settled the promise:
+            // report it handled so the caller doesn't reject it a second time.
+            pendingEval.remove(requestId) == null
         }
     }
 
