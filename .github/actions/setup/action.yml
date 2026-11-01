@@ -59,6 +59,16 @@ runs:
         restore-keys: |
           android-sdk-${{ runner.os }}-
 
+    # ubuntu-26.04 runner images no longer put sdkmanager on PATH; this installs
+    # the command-line tools and adds them. Its default package list asks for the
+    # legacy `tools` package, which the SDK repository no longer serves, so name
+    # platform-tools; the step below installs what GeckoView needs.
+    - name: Set up the Android SDK command-line tools
+      if: inputs.gradle == 'true'
+      uses: android-actions/setup-android@v3
+      with:
+        packages: platform-tools
+
     - name: Install the Android platform required by GeckoView
       if: inputs.gradle == 'true'
       shell: bash
