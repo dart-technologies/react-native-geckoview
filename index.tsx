@@ -137,6 +137,12 @@ export function configureGeckoViewSecurity(options: GeckoSecurityOptions): Promi
     return GeckoViewModule.configureSecurity(options);
 }
 
+// A default session key only has to be unique among this app's native sessions,
+// which outlive a JS reload: a load-time stamp plus a counter is enough. The key
+// is not a secret; any code in the app can address a session by its key.
+const DEFAULT_SESSION_KEY_PREFIX = `session-${Date.now().toString(36)}`;
+let defaultSessionKeyCount = 0;
+
 /**
  * React component that embeds a Mozilla GeckoView (Firefox rendering engine)
  * inside a React Native tree.
@@ -157,7 +163,7 @@ export function configureGeckoViewSecurity(options: GeckoSecurityOptions): Promi
  */
 const GeckoView = forwardRef<GeckoViewRef, GeckoViewProps>((props, ref) => {
     const [sessionKey] = useState(
-        () => props.sessionKey || `session-${Math.random().toString(36).substring(2, 11)}`
+        () => props.sessionKey || `${DEFAULT_SESSION_KEY_PREFIX}-${++defaultSessionKeyCount}`
     );
 
     useImperativeHandle(

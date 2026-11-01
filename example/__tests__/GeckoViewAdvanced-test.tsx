@@ -71,13 +71,16 @@ describe('GeckoView Component - Advanced Tests', () => {
 
         it('generates unique sessionKey when not provided', () => {
             let tree: ReactTestRenderer | undefined;
+            let other: ReactTestRenderer | undefined;
             renderer.act(() => {
                 tree = renderer.create(<GeckoView source={{ uri: 'https://example.com' }} />);
+                other = renderer.create(<GeckoView source={{ uri: 'https://example.com' }} />);
             });
 
             const instance = tree!.root.findByType('GeckoView' as any);
             expect(instance.props.sessionKey).toBeDefined();
-            expect(instance.props.sessionKey).toMatch(/^session-[a-z0-9]+$/);
+            expect(instance.props.sessionKey).toMatch(/^session-[a-z0-9]+-\d+$/);
+            expect(other!.root.findByType('GeckoView' as any).props.sessionKey).not.toBe(instance.props.sessionKey);
         });
 
         it('updates handleAudioFocus prop', () => {
@@ -336,7 +339,7 @@ describe('GeckoView Component - Advanced Tests', () => {
             ref.current!.reload();
 
             const calledWith = geckoModule.reload.mock.calls[0][0] as string;
-            expect(calledWith).toMatch(/^session-[a-z0-9]+$/);
+            expect(calledWith).toMatch(/^session-[a-z0-9]+-\d+$/);
         });
 
         it('different instances have different sessionKeys', () => {
