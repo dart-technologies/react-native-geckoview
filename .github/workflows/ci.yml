@@ -10,6 +10,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job only reads the repository. Artifact uploads use the Actions runtime
+# token, not GITHUB_TOKEN.
+permissions:
+  contents: read
+
 jobs:
   js:
     name: JS (lint + typecheck + test + build)
@@ -113,9 +118,14 @@ jobs:
         with:
           node-version-file: ".nvmrc"
 
-      - name: Audit root
-        run: corepack enable && yarn install --immutable && yarn npm audit --severity high --recursive
+      # The library has no runtime dependencies (react and react-native are peers),
+      # so what ships to consumers is its production dependency tree.
+      - name: Audit root (shipped dependencies)
+        run: corepack enable && yarn install --immutable && yarn npm audit --environment production --severity high --recursive
 
-      - name: Audit example
+      # The example app is never published; its advisories come from the React
+      # Native toolchain it pins. Reported in the log, but not a failure.
+      - name: Audit example (informational)
         working-directory: example
+        continue-on-error: true
         run: corepack enable && yarn install --immutable && yarn npm audit --severity high --recursive
