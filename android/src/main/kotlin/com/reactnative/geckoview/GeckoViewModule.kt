@@ -298,6 +298,23 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             promise.reject("PLAYBACK_RESTRICTED", "Media is blocked by vehicle UX restrictions")
             return
         }
+        // GeckoView's ScreenshotBuilder.capture asserts the UI thread, and React
+        // calls this on the native-modules thread. The capture's GeckoResult
+        // also settles on the UI thread, so the promise settles from there.
+        UiThreadUtil.runOnUiThread {
+            try {
+                captureSnapshotOnUiThread(sessionKey, promise)
+            } catch (e: Exception) {
+                promise.reject("SNAPSHOT_ERROR", e.message ?: "capturePixels failed", e)
+            }
+        }
+    }
+
+    private fun captureSnapshotOnUiThread(sessionKey: String, promise: Promise) {
+        if (!GeckoSessionManager.isPlaybackAllowed()) {
+            promise.reject("PLAYBACK_RESTRICTED", "Media is blocked by vehicle UX restrictions")
+            return
+        }
         val view = GeckoSessionManager.getOpenSession(sessionKey)?.let { GeckoSessionManager.getView(it) }
 
         if (view == null) {

@@ -222,6 +222,7 @@ class GeckoViewModuleTest {
         val promise: Promise = mockk(relaxed = true)
 
         module.captureSnapshot("session-a", promise)
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
 
         verify { promise.reject("VIEW_NOT_FOUND", any<String>()) }
         verify(exactly = 0) { promise.resolve(any()) }
@@ -241,6 +242,7 @@ class GeckoViewModuleTest {
         val promise: Promise = mockk(relaxed = true)
 
         module.captureSnapshot("session-a", promise)
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
 
         verify { promise.reject(eq("SNAPSHOT_TOO_LARGE"), any<String>()) }
         verify(exactly = 0) { view.capturePixels() } // must short-circuit before native capture
@@ -295,6 +297,42 @@ class GeckoViewModuleTest {
             )
         }
         verify(exactly = 0) { promise.resolve(any()) }
+    }
+
+    @Test
+    fun `captureSnapshot captures and settles on the main thread`() {
+        // React calls captureSnapshot on the native-modules thread, but GeckoView's
+        // ScreenshotBuilder.capture() asserts the UI thread (self-review M3).
+        val (module, dir) = newModuleWithRealFilesDir()
+        val bitmap = android.graphics.Bitmap.createBitmap(
+            16, 16, android.graphics.Bitmap.Config.ARGB_8888
+        )
+        val view: GeckoView = mockk(relaxed = true)
+        every { view.width } returns 16
+        every { view.height } returns 16
+        var captureThread: Thread? = null
+        every { view.capturePixels() } answers {
+            captureThread = Thread.currentThread()
+            GeckoResult.fromValue(bitmap)
+        }
+        mockkObject(GeckoSessionManager)
+        every { GeckoSessionManager.getOpenSession(any()) } returns mockk(relaxed = true)
+        every { GeckoSessionManager.getView(any()) } returns view
+        var settledThread: Thread? = null
+        val promise: Promise = mockk(relaxed = true)
+        every { promise.resolve(any()) } answers { settledThread = Thread.currentThread() }
+
+        val nativeModulesThread = Thread { module.captureSnapshot("session-a", promise) }
+        nativeModulesThread.start()
+        nativeModulesThread.join()
+        verify(exactly = 0) { view.capturePixels() }
+
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        val mainThread = android.os.Looper.getMainLooper().thread
+        assertSame(mainThread, captureThread)
+        assertSame(mainThread, settledThread)
+        dir.deleteRecursively()
     }
 
     @Test

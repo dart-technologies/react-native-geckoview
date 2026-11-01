@@ -105,7 +105,7 @@ describe('Feature Tests', () => {
 | `GeckoSessionManagerTest.kt` | Session pooling + concurrency stress (ConcurrentModificationException regression); UI-thread-only session creation; `init` never reopens pooled sessions |
 | `GeckoViewContentDelegateTest.kt` | Title / focus-exit events |
 | `GeckoViewManagerImplTest.kt` | View manager prop plumbing; teardown during playback abandons audio focus |
-| `GeckoViewModuleTest.kt` | **`isSafeLoadUrl` + `jsonEncodeString` adversarial matrix (security guard)**; per-session snapshot cleanup; `captureSnapshot` branch coverage; prompt-timeout coverage for Alert/Button/Text |
+| `GeckoViewModuleTest.kt` | **`isSafeLoadUrl` + `jsonEncodeString` adversarial matrix (security guard)**; per-session snapshot cleanup; `captureSnapshot` branch coverage and UI-thread capture; ref methods never create sessions; prompt-timeout coverage for Alert/Button/Text |
 | `GeckoViewNavigationDelegateTest.kt` | **`onLoadRequest` scheme gate + `sanitizeParsedIntent` + Play Store `appId` + host-spoof guards + `onNewSession` popup filter (security guard)** |
 | `GeckoViewPermissionDelegateTest.kt` | Security-first DRM/autoplay prompts + explicit opt-in paths |
 | `GeckoViewProgressDelegateTest.kt` | Progress events |
