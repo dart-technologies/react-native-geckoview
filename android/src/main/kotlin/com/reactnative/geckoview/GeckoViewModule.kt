@@ -58,6 +58,8 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     init {
         GeckoSessionManager.init(reactContext.applicationContext)
+        // Every path that closes a session reports it to onSessionClosing.
+        GeckoSessionManager.registerModule(this)
     }
 
     override fun getName() = "GeckoViewModule"
@@ -117,10 +119,9 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     @ReactMethod
     fun closeSession(sessionKey: String) {
-        UiThreadUtil.runOnUiThread {
-            GeckoSessionManager.releaseSession(sessionKey)
-            cleanupSnapshotsForSession(sessionKey)
-        }
+        // releaseSession reports the close to onSessionClosing, which drops the
+        // session's snapshots.
+        UiThreadUtil.runOnUiThread { GeckoSessionManager.releaseSession(sessionKey) }
     }
 
     @ReactMethod
@@ -446,8 +447,8 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
         // native bitmap pixels promptly rather than waiting for GC.
         var file: java.io.File? = null
         try {
-            if (synchronized(snapshotsLock) { pending.cancelled }) {
-                promise.reject("VIEW_NOT_FOUND", SNAPSHOT_SESSION_CLOSED_MESSAGE)
+            synchronized(snapshotsLock) { refusal(pending) }?.let { (code, message) ->
+                promise.reject(code, message)
                 return
             }
             // `noBackupFilesDir` keeps the PNG out of Android auto-backup,
@@ -465,19 +466,16 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             }
             // Registration and session cleanup share the lock, so a file is
             // either registered before cleanup deletes it, or never registered.
-            val registered = synchronized(snapshotsLock) {
-                if (pending.cancelled) {
-                    false
-                } else {
-                    snapshotsBySession.getOrPut(pending.sessionKey) { mutableSetOf() }.add(saved)
-                    true
+            val refused = synchronized(snapshotsLock) {
+                refusal(pending).also {
+                    if (it == null) snapshotsBySession.getOrPut(pending.sessionKey) { mutableSetOf() }.add(saved)
                 }
             }
-            if (registered) {
+            if (refused == null) {
                 promise.resolve(saved.absolutePath)
             } else {
                 saved.delete()
-                promise.reject("VIEW_NOT_FOUND", SNAPSHOT_SESSION_CLOSED_MESSAGE)
+                promise.reject(refused.first, refused.second)
             }
         } catch (e: Exception) {
             file?.delete()
@@ -486,6 +484,19 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             synchronized(snapshotsLock) { pendingSnapshots.remove(pending) }
             bitmap.recycle()
         }
+    }
+
+    /**
+     * Why [pending] may no longer be saved, as a rejection code and message,
+     * or null. Caller holds [snapshotsLock]. A UX restriction closes sessions
+     * from a post to the UI thread, so the gate is checked as well: a save
+     * refuses from the moment it closes, as evaluations do.
+     */
+    private fun refusal(pending: PendingSnapshot): Pair<String, String>? = when {
+        !GeckoSessionManager.isPlaybackAllowed() ->
+            GeckoSessionManager.PLAYBACK_RESTRICTED to GeckoSessionManager.PLAYBACK_RESTRICTED_MESSAGE
+        pending.cancelled -> "VIEW_NOT_FOUND" to SNAPSHOT_SESSION_CLOSED_MESSAGE
+        else -> null
     }
 
     @ReactMethod
@@ -603,6 +614,17 @@ class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                 set.removeAll(toRemove.toSet())
             }
         }
+    }
+
+    /**
+     * [GeckoSessionManager] calls this on the UI thread just before it closes
+     * the session for [sessionKey], through closeSession, shutdown, or the UX
+     * restriction closing every session. GeckoView closing a session itself,
+     * when its content process dies, isn't reported: that session's snapshots
+     * go when the pool closes it or when they pass the TTL.
+     */
+    internal fun onSessionClosing(sessionKey: String) {
+        cleanupSnapshotsForSession(sessionKey)
     }
 
     private fun cleanupSnapshotsForSession(sessionKey: String) {

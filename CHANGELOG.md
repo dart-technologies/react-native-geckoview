@@ -48,6 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   view's props in (release builds tend to apply `sessionKey` first), and when
   it changes on a mounted view.
 - Capture snapshots on the UI thread.
+- Shutdown and the AAOS playback restriction now drop the snapshots of every
+  session they close, as `closeSession` does: a save in flight rejects instead
+  of writing and resolving a screenshot for a closed session, and saved
+  snapshots are deleted. A save rejects with `PLAYBACK_RESTRICTED` from the
+  moment the playback gate closes, as evaluations do, and with
+  `VIEW_NOT_FOUND` when its session closes otherwise.
 - Resolve alert, confirm and text prompts with GeckoView 159's typed API, so
   `resolvePrompt` completes them instead of leaving the page blocked.
 - Ask before a page opens the maps app (`geo:` and maps links), as `intent:`

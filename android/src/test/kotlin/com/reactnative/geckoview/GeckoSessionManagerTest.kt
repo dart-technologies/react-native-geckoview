@@ -28,6 +28,7 @@ class GeckoSessionManagerTest {
     private lateinit var context: Context
     private lateinit var mockRuntime: GeckoRuntime
     private lateinit var mockSession: GeckoSession
+    private val registeredModules = mutableListOf<GeckoViewModule>()
 
     @Before
     fun setUp() {
@@ -56,6 +57,8 @@ class GeckoSessionManagerTest {
     
     @After
     fun tearDown() {
+        // The module set is process-wide: don't leave this test's mocks in it.
+        registeredModules.forEach { GeckoSessionManager.unregisterModuleForTest(it) }
         GeckoSessionManager.setPlaybackAllowed(true)
         GeckoSessionManager.closeAllSessions()
         // Clean up all mocks
@@ -478,6 +481,64 @@ class GeckoSessionManagerTest {
 
         GeckoSessionManager.closeAllSessions()
         verify(exactly = 1) { restrictedDelegate.release() }
+    }
+
+    /** A mock module registered for close reports, unregistered in tearDown. */
+    private fun registeredModule(): GeckoViewModule =
+        mockk<GeckoViewModule>(relaxed = true).also {
+            GeckoSessionManager.registerModule(it)
+            registeredModules += it
+        }
+
+    @Test
+    fun `every close path reports the sessions it closes to registered modules`() {
+        // Codex final review F2: shutdown and the UX restriction close sessions
+        // here, not through closeSession, so the module's snapshot cleanup
+        // never ran for them.
+        val module = registeredModule()
+        GeckoSessionManager.getOrCreateSession("closed-alone")
+        GeckoSessionManager.getOrCreateSession("closed-together-1")
+        GeckoSessionManager.getOrCreateSession("closed-together-2")
+
+        GeckoSessionManager.releaseSession("closed-alone")
+        verify(exactly = 1) { module.onSessionClosing("closed-alone") }
+
+        GeckoSessionManager.closeAllSessions()
+        verify(exactly = 1) { module.onSessionClosing("closed-together-1") }
+        verify(exactly = 1) { module.onSessionClosing("closed-together-2") }
+        verify(exactly = 1) { module.onSessionClosing("closed-alone") }
+    }
+
+    @Test
+    fun `modules hear of a session closing while it is still open`() {
+        // A save that registers its file between the close and the report
+        // would resolve for a closed session.
+        val module = registeredModule()
+        val openWhenReported = mutableListOf<Boolean>()
+        every { module.onSessionClosing(any()) } answers {
+            openWhenReported += GeckoSessionManager.getOpenSession(firstArg()) != null
+        }
+        GeckoSessionManager.getOrCreateSession("closed-alone")
+        GeckoSessionManager.getOrCreateSession("closed-together")
+
+        GeckoSessionManager.releaseSession("closed-alone")
+        GeckoSessionManager.closeAllSessions()
+
+        assertEquals(listOf(true, true), openWhenReported)
+    }
+
+    @Test
+    fun `a module that fails to clean up doesn't keep the others from it, or the sessions from closing`() {
+        // An Error too: on the restriction path it would end the UI thread.
+        val failing = registeredModule()
+        every { failing.onSessionClosing(any()) } throws Error("cleanup failed")
+        val module = registeredModule()
+        GeckoSessionManager.getOrCreateSession("closed")
+
+        GeckoSessionManager.closeAllSessions()
+
+        verify(exactly = 1) { module.onSessionClosing("closed") }
+        assertTrue(GeckoSessionManager.getAllSessions().isEmpty())
     }
 
     @Test

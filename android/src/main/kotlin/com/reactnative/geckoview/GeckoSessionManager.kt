@@ -104,31 +104,77 @@ object GeckoSessionManager {
     fun getOpenSession(key: String): GeckoSession? =
         if (openedSessionKeys.contains(key)) sessions[key] else null
 
-    /** UI thread only (GeckoSession.close asserts it). */
-    @Synchronized
+    /**
+     * UI thread only (GeckoSession.close asserts it). Registered modules drop
+     * [key]'s snapshots first, whether or not a session was pooled for it.
+     */
     fun releaseSession(key: String) {
-        openedSessionKeys.remove(key)
-        sessions.remove(key)?.let { session ->
-            views.remove(session)
-            releaseAudioFocus(session)
-            session.close()
+        notifySessionsClosing(listOf(key))
+        synchronized(this) {
+            openedSessionKeys.remove(key)
+            sessions.remove(key)?.let { session ->
+                views.remove(session)
+                releaseAudioFocus(session)
+                session.close()
+            }
         }
     }
 
-    /** UI thread only (GeckoSession.close asserts it). */
-    @Synchronized
+    /**
+     * UI thread only (GeckoSession.close asserts it). Shutdown and the UX
+     * restriction close sessions here rather than through closeSession, so
+     * registered modules drop every session's snapshots first, the same way.
+     */
     fun closeAllSessions() {
-        sessions.values.forEach { session ->
-            try {
-                releaseAudioFocus(session)
-                session.close()
-            } catch (e: Throwable) {
-                GeckoLog.w(TAG, "Failed to close session", e)
+        // Only the UI thread adds sessions, so none appears before the close.
+        notifySessionsClosing(sessions.keys.toList())
+        synchronized(this) {
+            sessions.values.forEach { session ->
+                try {
+                    releaseAudioFocus(session)
+                    session.close()
+                } catch (e: Throwable) {
+                    GeckoLog.w(TAG, "Failed to close session", e)
+                }
+            }
+            sessions.clear()
+            openedSessionKeys.clear()
+            views.clear()
+        }
+    }
+
+    // Modules that keep per-session state (snapshots) to drop when a session
+    // closes. Weak: this process-wide pool must not retain a module from a
+    // torn-down React instance.
+    private val modules: MutableSet<GeckoViewModule> = java.util.Collections.synchronizedSet(
+        java.util.Collections.newSetFromMap(java.util.WeakHashMap<GeckoViewModule, Boolean>())
+    )
+
+    internal fun registerModule(module: GeckoViewModule) {
+        modules.add(module)
+    }
+
+    internal fun unregisterModuleForTest(module: GeckoViewModule) {
+        modules.remove(module)
+    }
+
+    /**
+     * Before the sessions close, so a save that hasn't registered its file by
+     * then never will. Called outside this object's monitor: modules take
+     * their own locks.
+     */
+    private fun notifySessionsClosing(keys: List<String>) {
+        if (keys.isEmpty()) return
+        val targets = synchronized(modules) { modules.toList() }
+        for (module in targets) {
+            for (key in keys) {
+                try {
+                    module.onSessionClosing(key)
+                } catch (e: Throwable) {
+                    GeckoLog.w(TAG, "Failed to clean up a closing session", e)
+                }
             }
         }
-        sessions.clear()
-        openedSessionKeys.clear()
-        views.clear()
     }
 
     /** A page playing when its session closes never reports onPause/onStop. */
