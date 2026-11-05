@@ -16,6 +16,7 @@ class GeckoViewManagerImpl {
     private val pendingUris = WeakHashMap<GeckoView, String>()
     // Default true preserves the prior hardcoded desktop UA/viewport behavior.
     private val desktopModeMap = WeakHashMap<GeckoView, Boolean>()
+    private val closeSessionOnDropMap = WeakHashMap<GeckoView, Boolean>()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     fun getName() = NAME
@@ -59,6 +60,16 @@ class GeckoViewManagerImpl {
         } catch (e: Exception) {
             GeckoLog.e(TAG, "Error setting session key", e)
         }
+    }
+
+    /**
+     * Set by the JS wrapper when it generated the view's `sessionKey` because
+     * the host passed none. No other view can bind that key, so
+     * [onDropViewInstance] closes the session rather than leave it pooled, and
+     * open, for the life of the process. A host's key keeps pooling.
+     */
+    fun setCloseSessionOnDrop(view: GeckoView, value: Boolean) {
+        closeSessionOnDropMap[view] = value
     }
 
     fun setSource(view: GeckoView, source: ReadableMap?) {
@@ -192,25 +203,39 @@ class GeckoViewManagerImpl {
         }
     }
 
+    /**
+     * React Native drops a view when it deletes it, which with its default
+     * Android flags happens only when the component unmounts or its surface
+     * stops: never for StrictMode's double invocation or Fast Refresh. A
+     * session keyed by the JS wrapper ([setCloseSessionOnDrop]) closes here,
+     * on the UI thread GeckoSession.close needs; any other stays pooled.
+     */
     fun onDropViewInstance(view: GeckoView) {
         GeckoSessionManager.unregisterView(view)
+        val closeOnDrop = closeSessionOnDropMap.remove(view) == true
+        // The key of the session to close with this view, if it's still pooled:
+        // the host's closeSession, shutdown or the playback gate may have closed
+        // it already, and closing it again would report that twice.
+        var closingKey: String? = null
         try {
             audioFocusMap.remove(view)
             pendingUris.remove(view)
             desktopModeMap.remove(view)
             val session = view.session
             if (session != null) {
+                if (closeOnDrop) closingKey = GeckoSessionManager.getSessionKey(session)
                 session.navigationDelegate = null
                 session.promptDelegate = null
                 session.permissionDelegate = null
                 session.progressDelegate = null
-                // The pooled session outlives this view and may keep playing.
+                // A pooled session outlives this view and may keep playing.
                 // Its MediaDelegate stays, without events, to handle audio focus
                 // until the session closes or another view binds it; releasing it
                 // here left the page playing with nothing to pause it on a focus
-                // loss. A session GeckoView already closed plays nothing.
+                // loss. A session GeckoView already closed plays nothing, nor
+                // does one that closes with this view.
                 val media = session.mediaSessionDelegate
-                if (media is MediaDelegate && session.isOpen) {
+                if (media is MediaDelegate && session.isOpen && closingKey == null) {
                     media.detachFromView()
                     session.contentDelegate = DetachedContentDelegate
                 } else {
@@ -222,6 +247,16 @@ class GeckoViewManagerImpl {
             view.releaseSession()
         } catch (e: Throwable) {
             GeckoLog.w(TAG, "Error dropping view instance", e)
+        }
+        // After the view lets go of the session, and even if that failed: no
+        // view can bind a generated key again, so it would stay open until
+        // shutdown.
+        closingKey?.let { key ->
+            try {
+                GeckoSessionManager.releaseSession(key)
+            } catch (e: Throwable) {
+                GeckoLog.w(TAG, "Failed to close a dropped view's session", e)
+            }
         }
     }
 

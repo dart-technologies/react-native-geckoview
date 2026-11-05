@@ -95,8 +95,10 @@ Look for:
 - `GeckoSession` instances held beyond expected lifetime.
 - Delegate adapters (`GeckoViewNavigationDelegate`, `GeckoViewPromptDelegate`)
   whose referent view has been dropped. A `MediaDelegate` is expected to stay
-  on an open pooled session after its view drops, until the session closes;
-  a dropped view's delegate holds no view, Activity or React module.
+  on an open session with a `sessionKey` after its view drops, until the
+  session closes; a dropped view's delegate holds no view, Activity or React
+  module. A view without a `sessionKey` closes its session when it drops, so
+  that session should not outlive it.
 - Unreleased `AudioFocusRequest` objects when `handleAudioFocus=true` is
   toggled aggressively.
 

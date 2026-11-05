@@ -42,6 +42,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   closes or its content process dies. A view that binds the session reuses
   that delegate, so focus carries over without a new request, and it hears
   that the page's media is active and playing.
+- **Breaking.** A view without a `sessionKey` closes its session when React
+  Native drops the view; every session used to outlive its view. No view could
+  bind that generated key again, yet the session stayed pooled and open, with
+  its content process, until `shutdown()`, and each JS reload in development
+  added more. With `handleAudioFocus` its hidden page kept handling audio
+  focus, and could take it again with no UI left to stop it. The native view
+  does the closing, through an internal `closeSessionOnDrop` prop the wrapper
+  sets: an effect cleanup would also run for StrictMode's double invocation
+  and Fast Refresh, while the view stays mounted. As with `closeSession()`,
+  the page and its media stop and audio focus is given up. A snapshot still
+  saving rejects and saved ones are deleted; an `evaluateJavaScript` still
+  pending rejects too, with `EVAL_BRIDGE_UNAVAILABLE` when its port
+  disconnects or `EVAL_TIMEOUT` after 10 s. A ref kept past the unmount gets
+  no-ops and rejections. A view with a `sessionKey` keeps its session pooled
+  across remounts, so pass one to keep a page alive after its view unmounts.
+  Pass one too when React Native's `useTraitHiddenOnAndroid` or
+  `enableViewCulling` flag is on: React Native can then recreate the native
+  view of a component that stays mounted, and a view without a `sessionKey`
+  restarts in a fresh session. Calling `closeSession()` on unmount as well
+  stays harmless. The codegen props change, so rebuild the native app.
 - A session GeckoView closed because its content process died reopens when a
   view binds its key again, instead of leaving that view blank.
 - `handleAudioFocus` now takes effect whatever order React Native applies the

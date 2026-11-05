@@ -92,7 +92,9 @@ export interface GeckoViewProps extends ViewProps {
     source?: { uri: string };
     /**
      * Stable identifier to pool a `GeckoSession` across remounts. Views sharing
-     * a `sessionKey` reuse the same underlying session (history, cookies).
+     * a `sessionKey` reuse the same underlying session (history, cookies), which
+     * stays open after they unmount, until `closeSession()`. Without one, the
+     * view gets a session of its own, closed when the view unmounts.
      */
     sessionKey?: string;
     /** When true, requests system audio focus while media plays. */

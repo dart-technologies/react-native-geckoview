@@ -8,11 +8,14 @@ import com.facebook.react.bridge.WritableMap
 import com.facebook.react.uimanager.ReactStylesDiffMap
 import com.facebook.react.uimanager.ThemedReactContext
 import io.mockk.MockKMatcherScope
+import io.mockk.Runs
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkAll
 import io.mockk.verify
+import io.mockk.verifyOrder
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -621,6 +624,93 @@ class GeckoViewManagerImplTest {
         } finally {
             TestHelpers.unmockArguments()
         }
+    }
+
+    // ========== sessions keyed by the JS wrapper ==========
+
+    /** [session] is pooled under [key]; closing it is recorded, not run. */
+    private fun pooledUnder(key: String) {
+        every { GeckoSessionManager.getSessionKey(session) } returns key
+        every { GeckoSessionManager.releaseSession(any()) } just Runs
+    }
+
+    @Test
+    fun `a view whose sessionKey the JS wrapper generated closes its session when dropped`() {
+        // No view can bind a generated key again, so the session stayed pooled
+        // and open, playing on unheard with its focus held, until shutdown.
+        TestHelpers.mockArguments()
+        try {
+            recordSessionDelegates()
+            pooledUnder("generated")
+            manager.setCloseSessionOnDrop(geckoView, true)
+            mountPlaying(geckoView, "generated", mockk(relaxed = true))
+
+            manager.onDropViewInstance(geckoView)
+
+            // Closed once the view has let go of it.
+            verifyOrder {
+                geckoView.releaseSession()
+                GeckoSessionManager.releaseSession("generated")
+            }
+            // The page stops with its session: its focus is given up, and no
+            // delegate is left on the session to take it again.
+            verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+            assertNull(mediaDelegateSet)
+            assertNull(contentDelegateSet)
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    @Test
+    fun `a view with the host's sessionKey leaves its session pooled when dropped`() {
+        // The wrapper passes closeSessionOnDrop = false with a host's key.
+        TestHelpers.mockArguments()
+        try {
+            recordSessionDelegates()
+            pooledUnder("host-key")
+            manager.setCloseSessionOnDrop(geckoView, false)
+            val delegate = mountPlaying(geckoView, "host-key", mockk(relaxed = true))
+
+            manager.onDropViewInstance(geckoView)
+
+            verify(exactly = 0) { GeckoSessionManager.releaseSession(any()) }
+            assertSame(delegate, mediaDelegateSet)
+            verify(exactly = 0) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    @Test
+    fun `a generated key's session still closes when letting go of the view fails`() {
+        pooledUnder("generated")
+        manager.setCloseSessionOnDrop(geckoView, true)
+        every { geckoView.releaseSession() } throws IllegalStateException("release boom")
+
+        manager.onDropViewInstance(geckoView)
+
+        verify(exactly = 1) { GeckoSessionManager.releaseSession("generated") }
+    }
+
+    @Test
+    fun `the view manager closes a dropped view's session when the wrapper generated its key`() {
+        // Through React Native's own path: the codegen delegate applies the
+        // batch of props, then GeckoViewManager forwards the drop.
+        pooledUnder("generated")
+        trackSession(geckoView)
+        every { geckoView.getTag(any()) } returns null
+        val props: ReadableMap = mockk(relaxed = true)
+        every { props.entryIterator } answers {
+            linkedMapOf<String, Any>("sessionKey" to "generated", "closeSessionOnDrop" to true)
+                .entries.iterator()
+        }
+        val viewManager = GeckoViewManager()
+
+        viewManager.updateProperties(geckoView, ReactStylesDiffMap(props))
+        viewManager.onDropViewInstance(geckoView)
+
+        verify(exactly = 1) { GeckoSessionManager.releaseSession("generated") }
     }
 
     // ========== catch-path coverage ==========
