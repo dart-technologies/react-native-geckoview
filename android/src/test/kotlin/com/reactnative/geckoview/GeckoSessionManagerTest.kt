@@ -290,6 +290,19 @@ class GeckoSessionManagerTest {
     }
 
     @Test
+    fun `a pooled session GeckoView closed itself reopens when a view binds its key`() {
+        // GeckoView closes a session itself when its content process dies; the
+        // pool kept handing that dead session out, so a remounted view stayed
+        // blank.
+        val session = GeckoSessionManager.getOrCreateSession("crashed")
+        session.close()
+
+        assertSame(session, GeckoSessionManager.getOrCreateSession("crashed"))
+        assertTrue(session.isOpen)
+        verify(exactly = 2) { GeckoRuntimeManager.getRuntime(any()) }
+    }
+
+    @Test
     fun `session pooling - reuses sessions correctly`() {
         GeckoSessionManager.init(context)
 

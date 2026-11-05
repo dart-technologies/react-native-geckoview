@@ -6,8 +6,11 @@ import android.media.AudioManager
 import com.facebook.react.uimanager.ThemedReactContext
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import io.mockk.verify
 import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -151,6 +154,177 @@ class MediaDelegateTest {
         mediaDelegate.release()
 
         verify(exactly = 0) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+    }
+
+    // --- A dropped view's pooled session (Codex final review F1) ---
+
+    @Test
+    fun `a focus loss pauses the playing media session`() {
+        mediaDelegate = MediaDelegate(context, module, true, testViewId)
+        mediaDelegate.onPlay(session, mediaSession)
+
+        mediaDelegate.audioFocusChangeListener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS)
+
+        verify(exactly = 1) { mediaSession.pause() }
+    }
+
+    @Test
+    fun `a delegate detached from its view keeps handling focus without sending events`() {
+        mediaDelegate = MediaDelegate(context, module, true, testViewId)
+        mediaDelegate.onPlay(session, mediaSession)
+
+        mediaDelegate.detachFromView()
+        mediaDelegate.audioFocusChangeListener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS)
+        mediaDelegate.onPause(session, mediaSession)
+
+        verify(exactly = 1) { mediaSession.pause() }
+        verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+        // Only onPlay, from before the view was dropped, reached the view.
+        verify(exactly = 1) { module.sendViewEvent(testViewId, "onMediaSessionAction", any()) }
+    }
+
+    @Test
+    fun `a delegate detached from its view takes focus again when the hidden page plays`() {
+        mediaDelegate = MediaDelegate(context, module, true, testViewId)
+        mediaDelegate.detachFromView()
+
+        mediaDelegate.onPlay(session, mediaSession)
+
+        verify(exactly = 1) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
+        verify(exactly = 0) { module.sendViewEvent(any(), any(), any()) }
+    }
+
+    @Test
+    fun `a view that binds the session keeps the focus held for media still playing`() {
+        mediaDelegate = MediaDelegate(context, module, true, testViewId)
+        mediaDelegate.onPlay(session, mediaSession)
+        mediaDelegate.detachFromView()
+        val nextModule: GeckoViewModule = mockk(relaxed = true)
+
+        mediaDelegate.attachToView(nextModule, testViewId + 1)
+        mediaDelegate.setHandleAudioFocus(true)
+
+        // No new request: one would interrupt whatever else is playing.
+        verify(exactly = 1) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
+        verify(exactly = 0) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+        mediaDelegate.audioFocusChangeListener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS)
+        verify(exactly = 1) { mediaSession.pause() }
+        mediaDelegate.onPause(session, mediaSession)
+        verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+        verify(exactly = 2) { nextModule.sendViewEvent(testViewId + 1, "onMediaSessionAction", any()) }
+    }
+
+    @Test
+    fun `a view that binds the session is told it is active and playing`() {
+        // While no view showed the session its events went nowhere, and GeckoView
+        // doesn't repeat them for a view that binds it later.
+        mediaDelegate = MediaDelegate(context, module, true, testViewId)
+        mediaDelegate.detachFromView()
+        mediaDelegate.onActivated(session, mediaSession)
+        mediaDelegate.onPlay(session, mediaSession)
+        val nextModule: GeckoViewModule = mockk(relaxed = true)
+        val actions = mutableListOf<String?>()
+        every { nextModule.sendViewEvent(any(), any(), any()) } answers {
+            actions += thirdArg<com.facebook.react.bridge.WritableMap?>()?.getString("action")
+        }
+
+        mediaDelegate.attachToView(nextModule, testViewId + 1)
+
+        assertEquals(listOf("activated", "play"), actions)
+    }
+
+    @Test
+    fun `a view that binds a paused session is told only that it is active`() {
+        mediaDelegate = MediaDelegate(context, module, true, testViewId)
+        mediaDelegate.onActivated(session, mediaSession)
+        mediaDelegate.onPlay(session, mediaSession)
+        mediaDelegate.detachFromView()
+        mediaDelegate.onPause(session, mediaSession)
+        val nextModule: GeckoViewModule = mockk(relaxed = true)
+
+        mediaDelegate.attachToView(nextModule, testViewId + 1)
+
+        verify(exactly = 1) { nextModule.sendViewEvent(testViewId + 1, "onMediaSessionAction", any()) }
+    }
+
+    @Test
+    fun `turning focus handling off gives up the focus held for the page`() {
+        mediaDelegate = MediaDelegate(context, module, true, testViewId)
+        mediaDelegate.onPlay(session, mediaSession)
+
+        mediaDelegate.setHandleAudioFocus(false)
+        verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+
+        // From then on the host manages focus for the page.
+        mediaDelegate.onPause(session, mediaSession)
+        mediaDelegate.onPlay(session, mediaSession)
+        verify(exactly = 1) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
+        verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+    }
+
+    @Test
+    fun `turning focus handling on takes focus for media already playing`() {
+        mediaDelegate = MediaDelegate(context, module, false, testViewId)
+        mediaDelegate.onPlay(session, mediaSession)
+
+        mediaDelegate.setHandleAudioFocus(true)
+
+        verify(exactly = 1) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
+        mediaDelegate.audioFocusChangeListener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS)
+        verify(exactly = 1) { mediaSession.pause() }
+    }
+
+    @Test
+    fun `turning focus handling on requests none while nothing plays`() {
+        mediaDelegate = MediaDelegate(context, module, false, testViewId)
+
+        mediaDelegate.setHandleAudioFocus(true)
+
+        verify(exactly = 0) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
+    }
+
+    @Test
+    fun `an unchanged focus setting changes nothing`() {
+        mediaDelegate = MediaDelegate(context, module, true, testViewId)
+        mediaDelegate.onPlay(session, mediaSession)
+
+        mediaDelegate.setHandleAudioFocus(true)
+
+        verify(exactly = 1) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
+        verify(exactly = 0) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+    }
+
+    @Test
+    fun `focus changes arrive on the main looper`() {
+        // The application's AudioManager otherwise calls back on the looper of
+        // whichever thread created it first.
+        val request = slot<AudioFocusRequest>()
+        every { audioManager.requestAudioFocus(capture(request)) } returns AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        mediaDelegate = MediaDelegate(context, module, true, testViewId)
+
+        mediaDelegate.onPlay(session, mediaSession)
+
+        // Hidden API; Robolectric's android-all has it.
+        val handler = AudioFocusRequest::class.java
+            .getMethod("getOnAudioFocusChangeListenerHandler")
+            .invoke(request.captured) as android.os.Handler
+        assertSame(android.os.Looper.getMainLooper(), handler.looper)
+    }
+
+    @Test
+    fun `the audio service comes from the application context, not the view's`() {
+        // The delegate stays with its pooled session after the view is dropped,
+        // so it doesn't use an AudioManager scoped to the view's Activity.
+        val viewContext: ThemedReactContext = mockk(relaxed = true)
+        val appContext: Context = mockk(relaxed = true)
+        every { viewContext.applicationContext } returns appContext
+        every { appContext.getSystemService(Context.AUDIO_SERVICE) } returns audioManager
+
+        mediaDelegate = MediaDelegate(viewContext, module, true, testViewId)
+        mediaDelegate.onPlay(session, mediaSession)
+
+        verify(exactly = 0) { viewContext.getSystemService(any<String>()) }
+        verify(exactly = 1) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
     }
 
     // --- Event emission regardless of focus handling ---

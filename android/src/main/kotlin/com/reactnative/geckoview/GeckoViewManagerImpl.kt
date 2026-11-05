@@ -74,6 +74,21 @@ class GeckoViewManagerImpl {
         audioFocusMap[view] = handleAudioFocus
     }
 
+    /**
+     * After React Native applies a batch of the view's props. It doesn't order
+     * the setters, so `handleAudioFocus` can arrive after `sessionKey` bound
+     * the session: apply it to the session's MediaDelegate here. This also
+     * covers the prop changing on a mounted view.
+     */
+    fun onAfterUpdateTransaction(view: GeckoView) {
+        try {
+            (view.session?.mediaSessionDelegate as? MediaDelegate)
+                ?.setHandleAudioFocus(audioFocusMap[view] ?: false)
+        } catch (e: Exception) {
+            GeckoLog.w(TAG, "Failed to apply handleAudioFocus", e)
+        }
+    }
+
     fun setContentBlockingEnabled(view: GeckoView, value: Boolean) {
         try {
             val runtime = GeckoRuntimeManager.getRuntime(view.context.applicationContext)
@@ -144,8 +159,22 @@ class GeckoViewManagerImpl {
                 session.progressDelegate = GeckoViewProgressDelegate(module, viewId)
                 session.contentDelegate = GeckoViewContentDelegate(module, viewId)
 
-                val handleAudioFocus = audioFocusMap[view] ?: false
-                session.mediaSessionDelegate = MediaDelegate(context, module, handleAudioFocus, viewId)
+                // A dropped view leaves its MediaDelegate handling the pooled
+                // session's audio focus (see onDropViewInstance). Point it at
+                // this view rather than replace it: a fresh delegate would have
+                // to request focus again, interrupting other audio. This view's
+                // handleAudioFocus reaches it in onAfterUpdateTransaction.
+                val media = session.mediaSessionDelegate as? MediaDelegate
+                if (media != null && session.isOpen) {
+                    media.attachToView(module, viewId)
+                } else {
+                    // A session that isn't open plays nothing: GeckoView closed it
+                    // after its content process died and the pool couldn't reopen
+                    // it, or a restriction closed it since.
+                    media?.release()
+                    session.mediaSessionDelegate =
+                        MediaDelegate(context, module, audioFocusMap[view] ?: false, viewId)
+                }
                 GeckoLog.d(TAG, "Delegates attached successfully")
             } else if (retryCount < 3) {
                 // Retry after a short delay - module might not be initialized yet
@@ -175,11 +204,20 @@ class GeckoViewManagerImpl {
                 session.promptDelegate = null
                 session.permissionDelegate = null
                 session.progressDelegate = null
-                session.contentDelegate = null
-                // Abandon audio focus taken during playback before the delegate
-                // that holds the AudioFocusRequest is detached for good.
-                (session.mediaSessionDelegate as? MediaDelegate)?.release()
-                session.mediaSessionDelegate = null
+                // The pooled session outlives this view and may keep playing.
+                // Its MediaDelegate stays, without events, to handle audio focus
+                // until the session closes or another view binds it; releasing it
+                // here left the page playing with nothing to pause it on a focus
+                // loss. A session GeckoView already closed plays nothing.
+                val media = session.mediaSessionDelegate
+                if (media is MediaDelegate && session.isOpen) {
+                    media.detachFromView()
+                    session.contentDelegate = DetachedContentDelegate
+                } else {
+                    (media as? MediaDelegate)?.release()
+                    session.mediaSessionDelegate = null
+                    session.contentDelegate = null
+                }
             }
             view.releaseSession()
         } catch (e: Throwable) {
@@ -218,6 +256,17 @@ class GeckoViewManagerImpl {
                 GeckoLog.e(TAG, "Failed to load URI after retries", e)
             }
         }
+    }
+
+    /**
+     * Left on a pooled session no view shows. GeckoView reports a dead content
+     * process, and closes the session, only through its content delegate; the
+     * MediaDelegate then gives up the focus it holds for media that is gone.
+     */
+    private object DetachedContentDelegate : GeckoSession.ContentDelegate {
+        override fun onCrash(session: GeckoSession) = MediaDelegate.releaseFor(session)
+
+        override fun onKill(session: GeckoSession) = MediaDelegate.releaseFor(session)
     }
 
     companion object {

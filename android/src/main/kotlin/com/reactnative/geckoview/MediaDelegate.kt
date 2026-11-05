@@ -5,6 +5,8 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import com.facebook.react.bridge.Arguments
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.MediaSession
@@ -18,18 +20,31 @@ import org.mozilla.geckoview.MediaSession
  */
 class MediaDelegate(
     context: Context,
-    private val module: GeckoViewModule,
-    private val handleAudioFocus: Boolean = false,
-    private val viewId: Int = 0
+    module: GeckoViewModule,
+    handleAudioFocus: Boolean = false,
+    viewId: Int = 0
 ) : MediaSession.Delegate {
 
-    private val audioManager: AudioManager = 
-        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    
+    // The application's AudioManager, not one scoped to the view's Activity:
+    // this delegate stays with its pooled session after the view is dropped
+    // (see [detachFromView]).
+    private val audioManager: AudioManager =
+        context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+    // The view this delegate reports to ([attachToView]); the module is null
+    // while no view shows the session.
+    private var module: GeckoViewModule? = module
+    private var viewId: Int = viewId
+    private var handleAudioFocus: Boolean = handleAudioFocus
+
     private var activeMediaSession: MediaSession? = null
+    // Between onActivated and onDeactivated, so a view that binds the session
+    // later can be told ([attachToView]).
+    private var activated = false
     private var focusRequest: AudioFocusRequest? = null
 
-    private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+    // Internal so tests can deliver focus changes.
+    internal val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
             AudioManager.AUDIOFOCUS_GAIN -> {
                 GeckoLog.d(TAG, "Audio focus gained")
@@ -58,7 +73,7 @@ class MediaDelegate(
         val params = Arguments.createMap().apply {
             putString("action", "play")
         }
-        module.sendViewEvent(viewId, "onMediaSessionAction", params)
+        module?.sendViewEvent(viewId, "onMediaSessionAction", params)
     }
 
     override fun onPause(session: GeckoSession, mediaSession: MediaSession) {
@@ -72,7 +87,7 @@ class MediaDelegate(
         val params = Arguments.createMap().apply {
             putString("action", "pause")
         }
-        module.sendViewEvent(viewId, "onMediaSessionAction", params)
+        module?.sendViewEvent(viewId, "onMediaSessionAction", params)
     }
 
     override fun onStop(session: GeckoSession, mediaSession: MediaSession) {
@@ -86,22 +101,24 @@ class MediaDelegate(
         val params = Arguments.createMap().apply {
             putString("action", "stop")
         }
-        module.sendViewEvent(viewId, "onMediaSessionAction", params)
+        module?.sendViewEvent(viewId, "onMediaSessionAction", params)
     }
 
     override fun onActivated(session: GeckoSession, mediaSession: MediaSession) {
         GeckoLog.d(TAG, "onActivated called for MediaSession")
+        activated = true
         // Don't request focus on activation, wait for actual play event
         val params = Arguments.createMap().apply {
             putString("action", "activated")
         }
-        module.sendViewEvent(viewId, "onMediaSessionAction", params)
+        module?.sendViewEvent(viewId, "onMediaSessionAction", params)
     }
 
     override fun onDeactivated(session: GeckoSession, mediaSession: MediaSession) {
         GeckoLog.d(TAG, "onDeactivated called for MediaSession")
         activeMediaSession = null
-        
+        activated = false
+
         if (handleAudioFocus) {
             abandonAudioFocus()
         }
@@ -109,7 +126,7 @@ class MediaDelegate(
         val params = Arguments.createMap().apply {
             putString("action", "deactivated")
         }
-        module.sendViewEvent(viewId, "onMediaSessionAction", params)
+        module?.sendViewEvent(viewId, "onMediaSessionAction", params)
     }
 
     override fun onMetadata(
@@ -124,21 +141,69 @@ class MediaDelegate(
             putString("artist", meta.artist)
             putString("album", meta.album)
         }
-        module.sendViewEvent(viewId, "onMediaSessionAction", params)
+        module?.sendViewEvent(viewId, "onMediaSessionAction", params)
     }
 
     /**
      * Give up audio focus and forget the active media session. Called when the
-     * view or session that owns this delegate goes away mid-playback: no
-     * onPause/onStop is guaranteed to arrive afterwards, so focus taken in
-     * [onPlay] would otherwise be held until the process dies.
+     * session that owns this delegate closes mid-playback, including when
+     * GeckoView closed it itself: no onPause/onStop is guaranteed to arrive
+     * afterwards, so focus taken in [onPlay] would otherwise be held until the
+     * process dies.
      */
     fun release() {
         activeMediaSession = null
+        activated = false
         if (handleAudioFocus) {
             abandonAudioFocus()
         }
         focusRequest = null
+    }
+
+    /**
+     * The view was dropped, but its pooled session stays open. Keep handling
+     * the session's audio focus (hold it while the page plays, pause the page
+     * on a loss) until the session closes ([release]) or another view binds it
+     * ([attachToView]); stop sending events.
+     */
+    fun detachFromView() {
+        module = null
+    }
+
+    /**
+     * Report to the view that now binds this delegate's session, and tell it
+     * what it missed: that the page's media session is active, and that it is
+     * playing. Focus held for media still playing stays held, with no new
+     * request that would interrupt other audio; [setHandleAudioFocus] applies
+     * the view's own setting.
+     */
+    fun attachToView(module: GeckoViewModule, viewId: Int) {
+        this.module = module
+        this.viewId = viewId
+        if (activated) sendAction("activated")
+        if (activeMediaSession != null) sendAction("play")
+    }
+
+    /**
+     * Apply the bound view's `handleAudioFocus`: take focus for media already
+     * playing, or give it up. Nothing changes when the setting is the same.
+     */
+    fun setHandleAudioFocus(enabled: Boolean) {
+        if (enabled == handleAudioFocus) return
+        handleAudioFocus = enabled
+        if (!enabled) {
+            abandonAudioFocus()
+            focusRequest = null
+        } else if (activeMediaSession != null) {
+            requestAudioFocus()
+        }
+    }
+
+    private fun sendAction(action: String) {
+        val params = Arguments.createMap().apply {
+            putString("action", action)
+        }
+        module?.sendViewEvent(viewId, "onMediaSessionAction", params)
     }
 
     private fun requestAudioFocus() {
@@ -155,7 +220,10 @@ class MediaDelegate(
             
             val newFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(playbackAttributes)
-                .setOnAudioFocusChangeListener(audioFocusChangeListener)
+                // On the UI thread, where GeckoView calls this delegate. Without
+                // a Handler, changes arrive on the looper of whichever thread
+                // first created the application's AudioManager.
+                .setOnAudioFocusChangeListener(audioFocusChangeListener, Handler(Looper.getMainLooper()))
                 .build()
             
             focusRequest = newFocusRequest
@@ -196,5 +264,13 @@ class MediaDelegate(
 
     companion object {
         private const val TAG = "MediaDelegate"
+
+        /**
+         * GeckoView closed [session] itself because its content process died;
+         * no pause or stop follows, so give up the focus held for its media.
+         */
+        fun releaseFor(session: GeckoSession) {
+            (session.mediaSessionDelegate as? MediaDelegate)?.release()
+        }
     }
 }

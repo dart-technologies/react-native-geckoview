@@ -142,7 +142,9 @@ object GeckoSessionManager {
 
     private fun ensureSessionOpen(key: String, session: GeckoSession) {
         if (!isPlaybackAllowed()) return
-        if (openedSessionKeys.contains(key)) {
+        // GeckoView closes a session itself when its content process dies;
+        // reopen it for the view binding it rather than hand out a dead page.
+        if (openedSessionKeys.contains(key) && session.isOpen) {
             return
         }
 

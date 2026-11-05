@@ -35,7 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   arguments were never a Gecko switch; the prefs are set through
   `GeckoPreferenceController`, so autoplay and DRM stay blocked unless the
   host opts in with `configureGeckoViewSecurity` before the first view mounts.
-- Release audio focus when a playing view or its session is torn down.
+- Release audio focus when a playing session is closed. A view dropped
+  mid-playback no longer gives up the focus its pooled session is still
+  playing under: the session's media delegate stays, without events, holding
+  focus while the page plays and pausing it on a focus loss, until the session
+  closes or its content process dies. A view that binds the session reuses
+  that delegate, so focus carries over without a new request, and it hears
+  that the page's media is active and playing.
+- A session GeckoView closed because its content process died reopens when a
+  view binds its key again, instead of leaving that view blank.
+- `handleAudioFocus` now takes effect whatever order React Native applies the
+  view's props in (release builds tend to apply `sessionKey` first), and when
+  it changes on a mounted view.
 - Capture snapshots on the UI thread.
 - Resolve alert, confirm and text prompts with GeckoView 159's typed API, so
   `resolvePrompt` completes them instead of leaving the page blocked.

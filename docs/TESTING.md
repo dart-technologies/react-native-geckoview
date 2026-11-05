@@ -104,14 +104,14 @@ describe('Feature Tests', () => {
 | `GeckoRuntimeManagerTest.kt` | Runtime lifecycle; `shutdown` lock order against `GeckoSessionManager`; **runtime-pref assertions (autoplay/EME blocked by default via `GeckoPreferenceController`, no signature-weakening prefs, no runtime arguments) + `configureSecurity → autoGrantDrm/Autoplay` propagation (security guard)** |
 | `GeckoSecurityConfigTest.kt` | Pins `GeckoSecurityConfig.set()` propagation to the permission delegate |
 | `GeckoSessionManagerTest.kt` | Session pooling + concurrency stress (ConcurrentModificationException regression); UI-thread-only session creation; `init` never reopens pooled sessions |
-| `GeckoViewContentDelegateTest.kt` | Title / focus-exit events |
-| `GeckoViewManagerImplTest.kt` | View manager prop plumbing; teardown during playback abandons audio focus |
+| `GeckoViewContentDelegateTest.kt` | Title / focus-exit events; a content-process crash or kill gives up the session's audio focus |
+| `GeckoViewManagerImplTest.kt` | View manager prop plumbing; `handleAudioFocus` in either prop order (also through `ViewManager.updateProperties`) and toggled on a mounted view; a view dropped mid-playback leaves its pooled session's audio focus handled, a view that binds the session carries it on, and a session whose content process dies gives its focus up |
 | `GeckoViewModuleTest.kt` | **`isSafeLoadUrl` + `jsonEncodeString` adversarial matrix (security guard)**; per-session snapshot cleanup; `captureSnapshot` branch coverage and UI-thread capture; ref methods never create sessions; typed `resolvePrompt` + prompt-timeout coverage for Alert/Button/Text |
 | `GeckoViewNavigationDelegateTest.kt` | **`onLoadRequest` scheme gate + `sanitizeParsedIntent` + Play Store `appId` + host-spoof guards + `geo:`/maps launches need confirmation + `onNewSession` popup filter (security guard)** |
 | `GeckoViewPermissionDelegateTest.kt` | Security-first DRM/autoplay prompts + explicit opt-in paths |
 | `GeckoViewProgressDelegateTest.kt` | Progress events |
 | `GeckoViewPromptDelegateTest.kt` | Alert/popup/auth; eval-looking alerts stay page alerts |
-| `MediaDelegateTest.kt` | Audio focus, media session; `release()` on view or session teardown |
+| `MediaDelegateTest.kt` | Audio focus, media session; `release()` on session close; detaching from and re-attaching to a view, with the media state told to the new view; focus-setting changes; focus changes on the main looper |
 | `WebExtensionBridgeAssetsTest.kt` | Pins that `manifest.json` + `bridge.js` ship under `assets/react_native_geckoview_bridge/` |
 | `WebExtensionTest.kt` | Extension APIs + **`isSafeAssetPath` + `safeSerialize` + install rejection + missing-port guards (security guard)**; `installExtension` single-completion contract; port-scoped disconnect rejection + late-result short-circuit; in-flight evals reject `PLAYBACK_RESTRICTED` on a UX restriction |
 
