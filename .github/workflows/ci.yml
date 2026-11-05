@@ -3,8 +3,14 @@ name: CI
 on:
   push:
     branches: [main]
+  # Pull requests into a release branch get CI before they merge, not only
+  # afterwards through the release branch's own PR into main. Pushes to a
+  # release branch don't trigger CI themselves: each one re-runs that PR.
   pull_request:
-    branches: [main]
+    branches: [main, "release/**"]
+  # Manual runs, e.g. for a branch with no open PR. GitHub only dispatches a
+  # workflow whose file is on the default branch, so this needs ci.yml on main.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
