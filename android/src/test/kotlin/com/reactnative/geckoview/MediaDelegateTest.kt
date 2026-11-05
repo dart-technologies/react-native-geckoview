@@ -283,6 +283,56 @@ class MediaDelegateTest {
         verify(exactly = 0) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
     }
 
+    // --- Ducking (Codex review of the teardown fixes, round 1) ---
+
+    @Test
+    fun `turning focus handling off ends a duck the delegate applied`() {
+        // The request it gives up never gets the AUDIOFOCUS_GAIN that would unmute.
+        mediaDelegate = MediaDelegate(context, module, true, testViewId)
+        mediaDelegate.onPlay(session, mediaSession)
+        mediaDelegate.audioFocusChangeListener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+        verify(exactly = 1) { mediaSession.muteAudio(true) }
+
+        mediaDelegate.setHandleAudioFocus(false)
+
+        verify(exactly = 1) { mediaSession.muteAudio(false) }
+    }
+
+    @Test
+    fun `a pause during a duck unmutes the page for when it plays again`() {
+        mediaDelegate = MediaDelegate(context, module, true, testViewId)
+        mediaDelegate.onPlay(session, mediaSession)
+        mediaDelegate.audioFocusChangeListener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+
+        mediaDelegate.onPause(session, mediaSession)
+
+        verify(exactly = 1) { mediaSession.muteAudio(false) }
+    }
+
+    @Test
+    fun `focus coming back ends the duck, once`() {
+        mediaDelegate = MediaDelegate(context, module, true, testViewId)
+        mediaDelegate.onPlay(session, mediaSession)
+        mediaDelegate.audioFocusChangeListener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+
+        mediaDelegate.audioFocusChangeListener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        verify(exactly = 1) { mediaSession.muteAudio(false) }
+        mediaDelegate.onPause(session, mediaSession)
+
+        verify(exactly = 1) { mediaSession.muteAudio(false) }
+    }
+
+    @Test
+    fun `a fresh focus request ends a duck under the old one`() {
+        mediaDelegate = MediaDelegate(context, module, true, testViewId)
+        mediaDelegate.onPlay(session, mediaSession)
+        mediaDelegate.audioFocusChangeListener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+
+        mediaDelegate.onPlay(session, mediaSession)
+
+        verify(exactly = 1) { mediaSession.muteAudio(false) }
+    }
+
     @Test
     fun `an unchanged focus setting changes nothing`() {
         mediaDelegate = MediaDelegate(context, module, true, testViewId)

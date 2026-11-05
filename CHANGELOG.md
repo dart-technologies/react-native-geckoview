@@ -47,6 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `handleAudioFocus` now takes effect whatever order React Native applies the
   view's props in (release builds tend to apply `sessionKey` first), and when
   it changes on a mounted view.
+- A page the library muted for a duck is unmuted when it gives up that focus
+  request: on a pause or stop, a new request, or `handleAudioFocus` turning
+  off. The page used to stay silent, since no `AUDIOFOCUS_GAIN` reaches a
+  request that was given up.
 - Capture snapshots on the UI thread.
 - Shutdown and the AAOS playback restriction now drop the snapshots of every
   session they close, as `closeSession` does: a save in flight rejects instead

@@ -38,6 +38,9 @@ class MediaDelegate(
     private var handleAudioFocus: Boolean = handleAudioFocus
 
     private var activeMediaSession: MediaSession? = null
+    // Muted for a duck, until focus comes back or the request is given up.
+    // Kept apart from activeMediaSession, which a pause clears first.
+    private var duckedMediaSession: MediaSession? = null
     // Between onActivated and onDeactivated, so a view that binds the session
     // later can be told ([attachToView]).
     private var activated = false
@@ -48,7 +51,7 @@ class MediaDelegate(
         when (focusChange) {
             AudioManager.AUDIOFOCUS_GAIN -> {
                 GeckoLog.d(TAG, "Audio focus gained")
-                activeMediaSession?.muteAudio(false)
+                endDuck()
             }
             AudioManager.AUDIOFOCUS_LOSS,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
@@ -57,7 +60,10 @@ class MediaDelegate(
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
                 GeckoLog.d(TAG, "Audio focus ducked")
-                activeMediaSession?.muteAudio(true)
+                activeMediaSession?.let {
+                    it.muteAudio(true)
+                    duckedMediaSession = it
+                }
             }
         }
     }
@@ -210,6 +216,7 @@ class MediaDelegate(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             // Abandon any existing request to prevent leaks
             focusRequest?.let {
+                endDuck()
                 audioManager.abandonAudioFocusRequest(it)
             }
 
@@ -249,7 +256,17 @@ class MediaDelegate(
         }
     }
 
+    /**
+     * Unmute media muted for a duck. A request that is given up never gets
+     * the AUDIOFOCUS_GAIN that would, so the page would stay silent.
+     */
+    private fun endDuck() {
+        duckedMediaSession?.muteAudio(false)
+        duckedMediaSession = null
+    }
+
     private fun abandonAudioFocus() {
+        endDuck()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             focusRequest?.let {
                 audioManager.abandonAudioFocusRequest(it)

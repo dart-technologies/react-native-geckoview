@@ -111,7 +111,7 @@ describe('Feature Tests', () => {
 | `GeckoViewPermissionDelegateTest.kt` | Security-first DRM/autoplay prompts + explicit opt-in paths |
 | `GeckoViewProgressDelegateTest.kt` | Progress events |
 | `GeckoViewPromptDelegateTest.kt` | Alert/popup/auth; eval-looking alerts stay page alerts |
-| `MediaDelegateTest.kt` | Audio focus, media session; `release()` on session close; detaching from and re-attaching to a view, with the media state told to the new view; focus-setting changes; focus changes on the main looper |
+| `MediaDelegateTest.kt` | Audio focus, media session; `release()` on session close; detaching from and re-attaching to a view, with the media state told to the new view; focus-setting changes; a duck ending with focus coming back or with the request given up; focus changes on the main looper |
 | `WebExtensionBridgeAssetsTest.kt` | Pins that `manifest.json` + `bridge.js` ship under `assets/react_native_geckoview_bridge/` |
 | `WebExtensionTest.kt` | Extension APIs + **`isSafeAssetPath` + `safeSerialize` + install rejection + missing-port guards (security guard)**; `installExtension` single-completion contract; port-scoped disconnect rejection + late-result short-circuit; in-flight evals reject `PLAYBACK_RESTRICTED` on a UX restriction |
 
