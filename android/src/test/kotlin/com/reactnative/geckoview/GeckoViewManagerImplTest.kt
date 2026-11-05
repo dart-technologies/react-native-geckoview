@@ -335,12 +335,30 @@ class GeckoViewManagerImplTest {
         every { session.contentDelegate } answers { contentDelegateSet }
     }
 
-    /** Makes [view] report the session bound to it, as a real GeckoView does. */
+    // The session each tracked view shows, and the view that owns each session.
+    private val boundSessions = java.util.IdentityHashMap<GeckoView, GeckoSession>()
+    private val sessionOwners = java.util.IdentityHashMap<GeckoSession, GeckoView>()
+
+    /**
+     * Makes [view] report the session bound to it, as a real GeckoView does.
+     * GeckoView 159's setSession also takes the session from the view that
+     * showed it: the previous owner gets onRelease, which releases the session
+     * there, so that view's session is null from then on.
+     */
     private fun trackSession(view: GeckoView) {
-        var bound: GeckoSession? = null
-        every { view.session } answers { bound }
-        every { view.setSession(any()) } answers { bound = firstArg() }
-        every { view.releaseSession() } answers { bound.also { bound = null } }
+        every { view.session } answers { boundSessions[view] }
+        every { view.setSession(any()) } answers {
+            val s: GeckoSession = firstArg()
+            if (boundSessions[view] !== s) {
+                boundSessions[view]?.let { old -> if (sessionOwners[old] === view) sessionOwners.remove(old) }
+                sessionOwners[s]?.let { previous -> boundSessions.remove(previous) }
+                boundSessions[view] = s
+                sessionOwners[s] = view
+            }
+        }
+        every { view.releaseSession() } answers {
+            boundSessions.remove(view)?.also { if (sessionOwners[it] === view) sessionOwners.remove(it) }
+        }
     }
 
     /** A view the host mounts later, like [geckoView]. */
@@ -550,6 +568,8 @@ class GeckoViewManagerImplTest {
         death(contentDelegateSet!!)
 
         verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+        // The dropped view is gone, so nothing tells it.
+        verify(exactly = 0) { module.sendViewEvent(any(), "onContentProcessGone", any()) }
     }
 
     @Test
@@ -567,6 +587,89 @@ class GeckoViewManagerImplTest {
         TestHelpers.mockArguments()
         try {
             assertHiddenSessionDeathGivesUpFocus { it.onKill(session) }
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    private fun assertShownSessionDeathTellsTheView(
+        reason: String,
+        death: (GeckoSession.ContentDelegate) -> Unit,
+    ) {
+        recordSessionDelegates()
+        every { geckoView.id } returns 7
+        mountPlaying(geckoView, "shown", mockk(relaxed = true))
+
+        // Through the content delegate the view attached when it bound the session.
+        death(contentDelegateSet!!)
+
+        verify(exactly = 1) {
+            module.sendViewEvent(7, "onContentProcessGone", match<WritableMap> { it.getString("reason") == reason })
+        }
+        verify(exactly = 1) { module.sendViewEvent(any(), "onContentProcessGone", any()) }
+    }
+
+    @Test
+    fun `a crash of the session a view shows tells that view once`() {
+        TestHelpers.mockArguments()
+        try {
+            assertShownSessionDeathTellsTheView("crash") { it.onCrash(session) }
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    @Test
+    fun `a kill of the session a view shows tells that view once`() {
+        TestHelpers.mockArguments()
+        try {
+            assertShownSessionDeathTellsTheView("kill") { it.onKill(session) }
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    /**
+     * A remount: a new view binds the pooled session [geckoView] shows, and
+     * [geckoView] is dropped, in either order. Fabric applies the new view's
+     * props before it deletes the old view.
+     */
+    private fun assertRemountedViewHearsContentProcessGone(newViewBindsFirst: Boolean) {
+        recordSessionDelegates()
+        every { geckoView.id } returns 7
+        mountPlaying(geckoView, "pooled", mockk(relaxed = true))
+
+        val next = newView(42)
+        if (newViewBindsFirst) {
+            mount(next, "pooled")
+            manager.onDropViewInstance(geckoView)
+        } else {
+            manager.onDropViewInstance(geckoView)
+            mount(next, "pooled")
+        }
+        contentDelegateSet!!.onCrash(session)
+
+        // The new view's content delegate replaced the one the session had,
+        // and the dropped view hears nothing.
+        verify(exactly = 1) { module.sendViewEvent(42, "onContentProcessGone", any()) }
+        verify(exactly = 0) { module.sendViewEvent(7, "onContentProcessGone", any()) }
+    }
+
+    @Test
+    fun `a view that binds a dropped view's pooled session hears its content process die`() {
+        TestHelpers.mockArguments()
+        try {
+            assertRemountedViewHearsContentProcessGone(newViewBindsFirst = false)
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    @Test
+    fun `a new view that binds the session before the old view drops hears its content process die`() {
+        TestHelpers.mockArguments()
+        try {
+            assertRemountedViewHearsContentProcessGone(newViewBindsFirst = true)
         } finally {
             TestHelpers.unmockArguments()
         }

@@ -49,7 +49,21 @@ class GeckoViewContentDelegate(
         module.sendViewEvent(viewId, "onContextMenu", params)
     }
 
-    override fun onCrash(session: GeckoSession) = MediaDelegate.releaseFor(session)
+    override fun onCrash(session: GeckoSession) = onContentProcessGone(session, "crash")
 
-    override fun onKill(session: GeckoSession) = MediaDelegate.releaseFor(session)
+    override fun onKill(session: GeckoSession) = onContentProcessGone(session, "kill")
+
+    /**
+     * GeckoView has closed [session] because its content process died, so the
+     * view is blank and its media has stopped, and no pause or stop is
+     * guaranteed to follow. Give up the focus held for that media first, then
+     * tell JS, so the host can show an error and remount the view.
+     */
+    private fun onContentProcessGone(session: GeckoSession, reason: String) {
+        MediaDelegate.releaseFor(session)
+        val params = Arguments.createMap().apply {
+            putString("reason", reason)
+        }
+        module.sendViewEvent(viewId, "onContentProcessGone", params)
+    }
 }

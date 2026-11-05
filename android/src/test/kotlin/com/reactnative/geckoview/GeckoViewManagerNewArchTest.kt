@@ -38,6 +38,7 @@ class GeckoViewManagerNewArchTest {
         "topTitleChange" to "onTitleChange",
         "topContextMenu" to "onContextMenu",
         "topFocusExit" to "onFocusExit",
+        "topContentProcessGone" to "onContentProcessGone",
     )
 
     @Test
@@ -46,9 +47,9 @@ class GeckoViewManagerNewArchTest {
     }
 
     @Test
-    fun `exported direct events expose all 18 registrations`() {
+    fun `exported direct events expose all 19 registrations`() {
         val events = GeckoViewManager().getExportedCustomDirectEventTypeConstants()
-        assertEquals("expected exactly 18 direct events", 18, events.size)
+        assertEquals("expected exactly 19 direct events", 19, events.size)
         assertEquals(expectedEvents.keys, events.keys)
     }
 

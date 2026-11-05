@@ -128,3 +128,11 @@ export interface ContextMenuPayload {
 export interface FocusExitPayload {
     direction: 'up' | 'down' | 'left' | 'right';
 }
+
+export interface ContentProcessGonePayload {
+    /**
+     * `'crash'`: the content process crashed. `'kill'`: the system killed it,
+     * for example to reclaim memory.
+     */
+    reason: 'crash' | 'kill';
+}

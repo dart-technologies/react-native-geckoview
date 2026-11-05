@@ -5,6 +5,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
+import io.mockk.verifyOrder
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -16,7 +17,7 @@ import org.robolectric.annotation.Config
 
 /**
  * Tests for [GeckoViewContentDelegate] — title changes, focus-exit hack,
- * context-menu forwarding.
+ * context-menu forwarding, content-process death.
  *
  * `GeckoSession.ContentDelegate.ContextElement` exposes `type`/`linkUri`/`srcUri`
  * as public-final fields (not getters), so MockK cannot stub them directly. We
@@ -309,5 +310,35 @@ class GeckoViewContentDelegateTest {
         contentDelegate.onKill(session)
 
         verify(exactly = 1) { media.release() }
+    }
+
+    /**
+     * [death] reports that the content process died: the view hears why, in
+     * one event, once the session's media delegate has given up its focus.
+     */
+    private fun assertReportsContentProcessGone(reason: String, death: () -> Unit) {
+        val media: MediaDelegate = mockk(relaxed = true)
+        every { session.mediaSessionDelegate } returns media
+        val params = slot<WritableMap>()
+        every { module.sendViewEvent(testViewId, "onContentProcessGone", capture(params)) } returns Unit
+
+        death()
+
+        verifyOrder {
+            media.release()
+            module.sendViewEvent(testViewId, "onContentProcessGone", any())
+        }
+        verify(exactly = 1) { module.sendViewEvent(any(), any(), any()) }
+        assertEquals(mapOf("reason" to reason), params.captured.toHashMap())
+    }
+
+    @Test
+    fun `a crash tells the view its content process is gone`() {
+        assertReportsContentProcessGone("crash") { contentDelegate.onCrash(session) }
+    }
+
+    @Test
+    fun `a kill tells the view its content process is gone`() {
+        assertReportsContentProcessGone("kill") { contentDelegate.onKill(session) }
     }
 }

@@ -7,6 +7,7 @@
  * - Error category mapping
  * - Error message formatting
  * - Error recovery scenarios
+ * - onContentProcessGone reaching the native component
  */
 
 import '../setup';
@@ -389,6 +390,25 @@ describe('Error Delegate Tests', () => {
             );
 
             // Should not crash
+        });
+    });
+
+    describe('Content Process Gone', () => {
+        it('passes onContentProcessGone to the native component', async () => {
+            const onContentProcessGone = jest.fn();
+
+            const { getByTestId } = await render(
+                <GeckoView
+                    source={{ uri: fixtures.urls.example }}
+                    onContentProcessGone={onContentProcessGone}
+                    testID="gecko-content-process"
+                />
+            );
+
+            // The native component itself carries the handler, so Fabric can
+            // deliver topContentProcessGone to it.
+            expect(getByTestId('gecko-content-process').props.onContentProcessGone)
+                .toBe(onContentProcessGone);
         });
     });
 });
