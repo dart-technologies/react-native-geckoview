@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   request: on a pause or stop, a new request, or `handleAudioFocus` turning
   off. The page used to stay silent, since no `AUDIOFOCUS_GAIN` reaches a
   request that was given up.
+- View events are never coalesced, so two in a row for one view (such as the
+  `activated` and `play` a view gets when it binds a playing session) both
+  reach JS.
 - Capture snapshots on the UI thread.
 - Shutdown and the AAOS playback restriction now drop the snapshots of every
   session they close, as `closeSession` does: a save in flight rejects instead

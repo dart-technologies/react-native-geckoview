@@ -25,6 +25,12 @@ private class GeckoGenericEvent(
 ) : Event<GeckoGenericEvent>(surfaceId, viewTag) {
     override fun getEventName(): String = nativeEventName
     override fun getEventData(): WritableMap? = params
+
+    // Each event is discrete (a page load, a prompt, a media action), so two in
+    // a row for one view must both reach JS, like the activated and play a view
+    // gets when it binds a playing pooled session. RN 0.88 ignores this for a
+    // surfaceId of -1, but would coalesce them under any other.
+    override fun canCoalesce(): Boolean = false
 }
 
 class GeckoViewModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {

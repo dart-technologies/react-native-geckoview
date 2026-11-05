@@ -1803,6 +1803,19 @@ class GeckoViewModuleTest {
     }
 
     @Test
+    fun `view events are never coalesced`() {
+        // Codex round 2 on the teardown fixes: a view that binds a playing pooled
+        // session gets activated then play, and coalescing would drop the first.
+        mockkStatic(UIManagerHelper::class)
+        val dispatcher = mockk<com.facebook.react.uimanager.events.EventDispatcher>(relaxed = true)
+        every { UIManagerHelper.getEventDispatcher(any()) } returns dispatcher
+
+        newModule().sendViewEvent(42, "onMediaSessionAction", JavaOnlyMap())
+
+        verify { dispatcher.dispatchEvent(withArg { assertFalse(it.canCoalesce()) }) }
+    }
+
+    @Test
     fun `sendViewEvent drops the event when no dispatcher is available`() {
         mockkStatic(UIManagerHelper::class)
         every { UIManagerHelper.getEventDispatcher(any()) } returns null
