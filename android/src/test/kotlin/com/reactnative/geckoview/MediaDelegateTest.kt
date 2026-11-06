@@ -3,6 +3,7 @@ package com.reactnative.geckoview
 import android.content.Context
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import com.facebook.react.bridge.WritableMap
 import com.facebook.react.uimanager.ThemedReactContext
 import io.mockk.every
 import io.mockk.mockk
@@ -247,7 +248,27 @@ class MediaDelegateTest {
 
         mediaDelegate.attachToView(nextModule, testViewId + 1)
 
-        verify(exactly = 1) { nextModule.sendViewEvent(testViewId + 1, "onMediaSessionAction", any()) }
+        verify(exactly = 1) { nextModule.sendViewEvent(any(), any(), any()) }
+        verify(exactly = 1) {
+            nextModule.sendViewEvent(
+                testViewId + 1,
+                "onMediaSessionAction",
+                match<WritableMap> { it.getString("action") == "activated" },
+            )
+        }
+    }
+
+    @Test
+    fun `a view that binds a deactivated session is told nothing`() {
+        mediaDelegate = MediaDelegate(context, module, true, testViewId)
+        mediaDelegate.onActivated(session, mediaSession)
+        mediaDelegate.onDeactivated(session, mediaSession)
+        mediaDelegate.detachFromView()
+        val nextModule: GeckoViewModule = mockk(relaxed = true)
+
+        mediaDelegate.attachToView(nextModule, testViewId + 1)
+
+        verify(exactly = 0) { nextModule.sendViewEvent(any(), any(), any()) }
     }
 
     @Test

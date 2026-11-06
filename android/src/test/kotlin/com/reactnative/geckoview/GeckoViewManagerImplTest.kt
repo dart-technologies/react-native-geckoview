@@ -296,6 +296,34 @@ class GeckoViewManagerImplTest {
         verify { geckoView.releaseSession() }
     }
 
+    @Test
+    fun `onDropViewInstance still releases when there is no session`() {
+        every { geckoView.session } returns null
+
+        manager.onDropViewInstance(geckoView)
+
+        verify { geckoView.releaseSession() }
+    }
+
+    @Test
+    fun `onDropViewInstance swallows a throwing releaseSession`() {
+        every { geckoView.session } returns session
+        every { geckoView.releaseSession() } throws RuntimeException("release boom")
+
+        // The catch must absorb the failure rather than crashing view teardown.
+        manager.onDropViewInstance(geckoView)
+    }
+
+    @Test
+    fun `onDropViewInstance swallows an Error from releaseSession too`() {
+        every { geckoView.session } returns session
+        every { geckoView.releaseSession() } throws NoSuchMethodError("release boom")
+
+        // The catch takes any Throwable: a LinkageError from GeckoView would
+        // crash view teardown just the same.
+        manager.onDropViewInstance(geckoView)
+    }
+
     // The media and content delegates the code last set on [session].
     private var mediaDelegateSet: MediaSession.Delegate? = null
     private var contentDelegateSet: GeckoSession.ContentDelegate? = null
@@ -554,6 +582,7 @@ class GeckoViewManagerImplTest {
             recordSessionDelegates()
             val media: MediaSession = mockk(relaxed = true)
             val first = mountPlaying(geckoView, "pooled", media)
+            first.onActivated(session, media)
             every { session.isOpen } returns false
             contentDelegateSet!!.onCrash(session)
             verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
