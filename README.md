@@ -221,7 +221,8 @@ A session with a `sessionKey` stays open after its view unmounts, until
 `closeSession()`, `shutdown()` or the AAOS playback gate closes it. Without a
 `sessionKey`, each `GeckoView` gets a session of its own, which closes when the
 view unmounts: the page and its media stop, and its saved snapshots are
-deleted. StrictMode's double-invoked effects and Fast Refresh don't close it.
+deleted. StrictMode's double-invoked effects and a Fast Refresh that keeps
+state don't close it.
 Give a view a `sessionKey` to keep its page, or its audio, alive after it
 unmounts. See [docs/ADVANCED.md](docs/ADVANCED.md#session-management).
 

@@ -675,4 +675,34 @@ class GeckoSessionManagerTest {
         }
     }
 
+    @Test
+    fun `dropping a view whose session GeckoView closed after a crash takes it out of the pool once`() {
+        val module = registeredModule()
+        val manager = GeckoViewManagerImpl()
+        val view = mountView(manager, "session-generated-1", generated = true)
+        // GeckoView closes a session itself when its content process dies.
+        GeckoSessionManager.getOpenSession("session-generated-1")!!.close()
+
+        manager.onDropViewInstance(view)
+
+        assertFalse(GeckoSessionManager.getAllSessions().containsKey("session-generated-1"))
+        verify(exactly = 1) { module.onSessionClosing("session-generated-1") }
+    }
+
+    @Test
+    fun `a drop between the playback gate closing and the close it posts reports each key once`() {
+        val module = registeredModule()
+        val manager = GeckoViewManagerImpl()
+        val generatedView = mountView(manager, "session-generated-1", generated = true)
+        mountView(manager, "host-key", generated = false)
+
+        // The restriction closes every session from a post to the UI thread.
+        GeckoSessionManager.setPlaybackAllowed(false)
+        manager.onDropViewInstance(generatedView)
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        verify(exactly = 1) { module.onSessionClosing("session-generated-1") }
+        verify(exactly = 1) { module.onSessionClosing("host-key") }
+        assertTrue(GeckoSessionManager.getAllSessions().isEmpty())
+    }
 }

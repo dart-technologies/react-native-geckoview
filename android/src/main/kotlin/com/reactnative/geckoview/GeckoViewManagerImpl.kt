@@ -206,9 +206,10 @@ class GeckoViewManagerImpl {
     /**
      * React Native drops a view when it deletes it, which with its default
      * Android flags happens only when the component unmounts or its surface
-     * stops: never for StrictMode's double invocation or Fast Refresh. A
-     * session keyed by the JS wrapper ([setCloseSessionOnDrop]) closes here,
-     * on the UI thread GeckoSession.close needs; any other stays pooled.
+     * stops: never for StrictMode's double invocation or a Fast Refresh that
+     * keeps state. A session keyed by the JS wrapper ([setCloseSessionOnDrop])
+     * closes here, on the UI thread GeckoSession.close needs; any other stays
+     * pooled.
      */
     fun onDropViewInstance(view: GeckoView) {
         GeckoSessionManager.unregisterView(view)
