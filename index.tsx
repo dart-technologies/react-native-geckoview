@@ -14,17 +14,17 @@ import {
 // import time, which reaches into React Native's native bridge. Wrap the
 // import so the library still loads under Jest (where there is no bridge)
 // and test files can exercise the component via the mocked NativeModules.
-const NativeGeckoView: HostComponent<GeckoViewProps> = (() => {
+const NativeGeckoView: HostComponent<NativeGeckoViewProps> = (() => {
     try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const mod = require('./src/GeckoViewNativeComponent');
-        return mod.default as HostComponent<GeckoViewProps>;
+        return mod.default as HostComponent<NativeGeckoViewProps>;
     } catch {
         // Fallback: codegen unavailable (e.g. under Jest). Tests stub
         // `requireNativeComponent` in setup.
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { requireNativeComponent } = require('react-native');
-        return requireNativeComponent('GeckoView') as HostComponent<GeckoViewProps>;
+        return requireNativeComponent('GeckoView') as HostComponent<NativeGeckoViewProps>;
     }
 })();
 import type {
@@ -36,6 +36,12 @@ import type {
     GeckoSecurityOptions,
 } from './src/types';
 import { hasFabricRuntime } from './src/fabricDetection';
+
+/** The public props, plus the ones only this wrapper passes to the native view. */
+type NativeGeckoViewProps = GeckoViewProps & {
+    /** See `closeSessionOnDrop` in src/GeckoViewNativeComponent.ts. */
+    closeSessionOnDrop?: boolean;
+};
 
 /**
  * Shape of the native `GeckoViewModule` turbo/legacy module. Mirrors the
@@ -138,8 +144,8 @@ export function configureGeckoViewSecurity(options: GeckoSecurityOptions): Promi
 }
 
 // A default session key only has to be unique among this app's native sessions,
-// which outlive a JS reload: a load-time stamp plus a counter is enough. The key
-// is not a secret; any code in the app can address a session by its key.
+// which can outlive a JS reload: a load-time stamp plus a counter is enough. The
+// key is not a secret; any code in the app can address a session by its key.
 const DEFAULT_SESSION_KEY_PREFIX = `session-${Date.now().toString(36)}`;
 let defaultSessionKeyCount = 0;
 
@@ -162,9 +168,10 @@ let defaultSessionKeyCount = 0;
  * ```
  */
 const GeckoView = forwardRef<GeckoViewRef, GeckoViewProps>((props, ref) => {
-    const [sessionKey] = useState(
-        () => props.sessionKey || `${DEFAULT_SESSION_KEY_PREFIX}-${++defaultSessionKeyCount}`
-    );
+    const [{ sessionKey, keyGenerated }] = useState(() => ({
+        sessionKey: props.sessionKey || `${DEFAULT_SESSION_KEY_PREFIX}-${++defaultSessionKeyCount}`,
+        keyGenerated: !props.sessionKey,
+    }));
 
     useImperativeHandle(
         ref,
@@ -194,13 +201,21 @@ const GeckoView = forwardRef<GeckoViewRef, GeckoViewProps>((props, ref) => {
         [sessionKey]
     );
 
-    // Sessions are pooled in GeckoSessionManager (keyed by sessionKey) and deliberately
-    // outlive GeckoView mounts. Auto-closing on unmount would discard session state on
-    // every re-render; consumers should call ref.closeSession() explicitly.
+    // Sessions are pooled natively by sessionKey. A host's key outlives this view: a
+    // remount with the same key gets its session back, until ref.closeSession(). A
+    // generated key is never bound again once its view is gone, so the native view
+    // closes that session when React Native drops it (closeSessionOnDrop). Not from an
+    // effect cleanup here: StrictMode's double invocation, Fast Refresh and a hidden
+    // <Activity> run cleanups too, and would close the session under a native view
+    // that is still mounted.
 
     return (
         <GeckoViewErrorBoundary style={props.style}>
-            <NativeGeckoView {...props} sessionKey={sessionKey} />
+            <NativeGeckoView
+                {...props}
+                sessionKey={sessionKey}
+                closeSessionOnDrop={keyGenerated}
+            />
         </GeckoViewErrorBoundary>
     );
 });

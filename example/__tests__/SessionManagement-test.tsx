@@ -13,7 +13,7 @@ import '../setup';
 import React, { useRef, useState } from 'react';
 import { render, waitFor, act, RenderResult } from '@testing-library/react-native';
 import { NativeModules } from 'react-native';
-import GeckoView, { GeckoViewRef } from 'react-native-geckoview';
+import GeckoView, { GeckoViewProps, GeckoViewRef } from 'react-native-geckoview';
 import { fixtures, GeckoViewModuleMock } from './testUtils';
 
 // Mock Fabric detection to force legacy mode
@@ -207,24 +207,28 @@ describe('GeckoView Session Management E2E', () => {
                 <GeckoView source={{ uri: 'https://example.com' }} testID="temp-view" />
             );
 
-            await waitFor(() => {
-                expect(getByTestId('temp-view')).toBeDefined();
-            });
+            // No other view can bind a generated key, so the native view closes
+            // its session when React Native drops it.
+            const view = getByTestId('temp-view');
+            expect(view.props.sessionKey).toMatch(/^session-[a-z0-9]+-\d+$/);
+            expect(view.props.closeSessionOnDrop).toBe(true);
 
-            // Unmount should trigger cleanup
             await unmount();
 
-            // Verify cleanup completed
+            // The close is native, not a JS cleanup that also runs while the view stays mounted.
+            const geckoModule = NativeModules.GeckoViewModule as GeckoViewModuleMock;
+            expect(geckoModule.closeSession).not.toHaveBeenCalled();
         });
 
         it('should preserve session on unmount when sessionKey is provided', async () => {
-            const { unmount }: RenderResult = await render(
+            const { unmount, getByTestId: getMounted }: RenderResult = await render(
                 <GeckoView
                     source={{ uri: 'https://example.com' }}
                     sessionKey="persistent"
                     testID="persistent-view"
                 />
             );
+            expect(getMounted('persistent-view').props.closeSessionOnDrop).toBe(false);
 
             await act(async () => {
                 await new Promise<void>(resolve => setTimeout(resolve, 100));
@@ -244,6 +248,85 @@ describe('GeckoView Session Management E2E', () => {
             await waitFor(() => {
                 expect(getByTestId('remounted-view')).toBeDefined();
             });
+            const remounted = getByTestId('remounted-view');
+            expect(remounted.props.sessionKey).toBe('persistent');
+            expect(remounted.props.closeSessionOnDrop).toBe(false);
+            const geckoModule = NativeModules.GeckoViewModule as GeckoViewModuleMock;
+            expect(geckoModule.closeSession).not.toHaveBeenCalled();
+        });
+
+        it('should not close a generated session when StrictMode reruns effects', async () => {
+            // StrictMode runs every effect's cleanup once while the tree stays
+            // mounted; a JS close there would leave the native view on a closed
+            // session.
+            let cleanups = 0;
+            const Probe: React.FC = () => {
+                React.useEffect(() => () => {
+                    cleanups++;
+                }, []);
+                return null;
+            };
+
+            const { unmount, getByTestId }: RenderResult = await render(
+                <React.StrictMode>
+                    <Probe />
+                    <GeckoView source={{ uri: fixtures.urls.example }} testID="strict-view" />
+                </React.StrictMode>
+            );
+
+            expect(cleanups).toBe(1);
+            expect(getByTestId('strict-view').props.closeSessionOnDrop).toBe(true);
+            const geckoModule = NativeModules.GeckoViewModule as GeckoViewModuleMock;
+            expect(geckoModule.closeSession).not.toHaveBeenCalled();
+
+            await unmount();
+            expect(geckoModule.closeSession).not.toHaveBeenCalled();
+        });
+
+        it('should keep closing a generated session when a sessionKey arrives after mount', async () => {
+            // The key is fixed at mount, and so is the flag: the native view
+            // keeps the generated key, so it must keep closing that session.
+            const { getByTestId, rerender }: RenderResult = await render(
+                <GeckoView source={{ uri: fixtures.urls.example }} testID="late-key-view" />
+            );
+            const generatedKey = getByTestId('late-key-view').props.sessionKey;
+
+            await rerender(
+                <GeckoView source={{ uri: fixtures.urls.example }} sessionKey="late-host-key" testID="late-key-view" />
+            );
+
+            expect(getByTestId('late-key-view').props.sessionKey).toBe(generatedKey);
+            expect(getByTestId('late-key-view').props.closeSessionOnDrop).toBe(true);
+        });
+
+        it('should keep a host session pooled when its sessionKey goes away after mount', async () => {
+            const { getByTestId, rerender }: RenderResult = await render(
+                <GeckoView source={{ uri: fixtures.urls.example }} sessionKey="host-key" testID="host-key-view" />
+            );
+
+            await rerender(<GeckoView source={{ uri: fixtures.urls.example }} testID="host-key-view" />);
+
+            expect(getByTestId('host-key-view').props.sessionKey).toBe('host-key');
+            expect(getByTestId('host-key-view').props.closeSessionOnDrop).toBe(false);
+        });
+
+        it('should treat an empty sessionKey as none', async () => {
+            const { getByTestId }: RenderResult = await render(
+                <GeckoView source={{ uri: fixtures.urls.example }} sessionKey="" testID="empty-key-view" />
+            );
+
+            expect(getByTestId('empty-key-view').props.sessionKey).toMatch(/^session-[a-z0-9]+-\d+$/);
+            expect(getByTestId('empty-key-view').props.closeSessionOnDrop).toBe(true);
+        });
+
+        it('should keep a host sessionKey pooled even if closeSessionOnDrop is spread into its props', async () => {
+            // The flag is the wrapper's own: a host's key must never close with its view.
+            const spread = { closeSessionOnDrop: true } as unknown as GeckoViewProps;
+            const { getByTestId }: RenderResult = await render(
+                <GeckoView {...spread} sessionKey="host-key" testID="host-view" />
+            );
+
+            expect(getByTestId('host-view').props.closeSessionOnDrop).toBe(false);
         });
 
         it('should handle rapid mount/unmount cycles', async () => {

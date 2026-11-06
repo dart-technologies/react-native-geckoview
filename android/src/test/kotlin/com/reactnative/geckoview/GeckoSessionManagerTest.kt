@@ -584,4 +584,125 @@ class GeckoSessionManagerTest {
         assertTrue(GeckoSessionManager.getAllViews().isEmpty())
     }
 
+    // ========== sessions keyed by the JS wrapper ==========
+
+    /**
+     * A view the view manager binds to [key], tracking its session as a real
+     * GeckoView does; [generated] is the closeSessionOnDrop the wrapper
+     * passes, or null when the prop never reaches the view.
+     */
+    private fun mountView(manager: GeckoViewManagerImpl, key: String, generated: Boolean?) =
+        mockk<org.mozilla.geckoview.GeckoView>(relaxed = true).also { view ->
+            var bound: GeckoSession? = null
+            every { view.session } answers { bound }
+            every { view.setSession(any()) } answers { bound = firstArg() }
+            every { view.releaseSession() } answers { bound.also { bound = null } }
+            if (generated != null) manager.setCloseSessionOnDrop(view, generated)
+            manager.setSessionKey(view, key)
+        }
+
+    @Test
+    fun `a dropped view's session closes when the JS wrapper generated its key, and a host's stays pooled`() {
+        // No view can bind a generated key again: its session stayed pooled and
+        // open, with its content process, for the life of the process.
+        val module = registeredModule()
+        val manager = GeckoViewManagerImpl()
+        val generatedView = mountView(manager, "session-generated-1", generated = true)
+        val hostView = mountView(manager, "host-key", generated = false)
+        val generated = GeckoSessionManager.getOpenSession("session-generated-1")!!
+        val host = GeckoSessionManager.getOpenSession("host-key")!!
+
+        manager.onDropViewInstance(generatedView)
+        manager.onDropViewInstance(hostView)
+
+        assertFalse(generated.isOpen)
+        assertFalse(GeckoSessionManager.getAllSessions().containsKey("session-generated-1"))
+        verify(exactly = 1) { module.onSessionClosing("session-generated-1") }
+        // A remount with the host's key gets its open session back.
+        assertTrue(host.isOpen)
+        assertSame(host, GeckoSessionManager.getOrCreateSession("host-key"))
+        verify(exactly = 0) { module.onSessionClosing("host-key") }
+
+        // The host's own closeSession landing afterwards only reports the key
+        // closed again, which drops no snapshot: none can be saved for it now.
+        GeckoSessionManager.releaseSession("session-generated-1")
+        verify(exactly = 2) { module.onSessionClosing("session-generated-1") }
+        assertTrue(host.isOpen)
+    }
+
+    @Test
+    fun `a dropped view that never got closeSessionOnDrop leaves its session pooled`() {
+        // Only an explicit true closes. With props diffing
+        // (enablePropsUpdateReconciliationAndroid), Fabric leaves out a prop
+        // still at its default, so a false never arrives; nor does anything
+        // from a host that uses the native component without the wrapper.
+        val module = registeredModule()
+        val manager = GeckoViewManagerImpl()
+        val view = mountView(manager, "never-told", generated = null)
+        val session = GeckoSessionManager.getOpenSession("never-told")!!
+
+        manager.onDropViewInstance(view)
+
+        assertTrue(session.isOpen)
+        assertSame(session, GeckoSessionManager.getOpenSession("never-told"))
+        verify(exactly = 0) { module.onSessionClosing(any()) }
+    }
+
+    private fun assertDropAfterCloseReportsNoSecondClose(close: () -> Unit) {
+        val module = registeredModule()
+        val manager = GeckoViewManagerImpl()
+        val view = mountView(manager, "session-generated-1", generated = true)
+
+        close()
+        manager.onDropViewInstance(view)
+
+        verify(exactly = 1) { module.onSessionClosing("session-generated-1") }
+        assertTrue(GeckoSessionManager.getAllSessions().isEmpty())
+    }
+
+    @Test
+    fun `dropping a view whose session the host closed first doesn't close it again`() {
+        // DART TV calls closeSession() as the view unmounts, and the call can
+        // reach the UI thread before React Native drops the view.
+        assertDropAfterCloseReportsNoSecondClose { GeckoSessionManager.releaseSession("session-generated-1") }
+    }
+
+    @Test
+    fun `dropping a view after the playback gate closed every session doesn't close it again`() {
+        assertDropAfterCloseReportsNoSecondClose {
+            GeckoSessionManager.setPlaybackAllowed(false)
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        }
+    }
+
+    @Test
+    fun `dropping a view whose session GeckoView closed after a crash takes it out of the pool once`() {
+        val module = registeredModule()
+        val manager = GeckoViewManagerImpl()
+        val view = mountView(manager, "session-generated-1", generated = true)
+        // GeckoView closes a session itself when its content process dies.
+        GeckoSessionManager.getOpenSession("session-generated-1")!!.close()
+
+        manager.onDropViewInstance(view)
+
+        assertFalse(GeckoSessionManager.getAllSessions().containsKey("session-generated-1"))
+        verify(exactly = 1) { module.onSessionClosing("session-generated-1") }
+    }
+
+    @Test
+    fun `a drop between the playback gate closing and the close it posts reports each key once`() {
+        val module = registeredModule()
+        val manager = GeckoViewManagerImpl()
+        val generatedView = mountView(manager, "session-generated-1", generated = true)
+        mountView(manager, "host-key", generated = false)
+
+        // The restriction closes every session from a post to the UI thread.
+        GeckoSessionManager.setPlaybackAllowed(false)
+        manager.onDropViewInstance(generatedView)
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        verify(exactly = 1) { module.onSessionClosing("session-generated-1") }
+        verify(exactly = 1) { module.onSessionClosing("host-key") }
+        assertTrue(GeckoSessionManager.getAllSessions().isEmpty())
+    }
 }

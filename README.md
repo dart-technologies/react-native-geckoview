@@ -90,7 +90,7 @@ function MyBrowser() {
 | Prop | Type | Default | Description |
 |------|------|---------|-------------|
 | `source` | `{ uri: string }` | required | URL to load |
-| `sessionKey` | `string` | `undefined` | Unique session identifier for persistence across remounts |
+| `sessionKey` | `string` | `undefined` | Pools the view's session under this key, so a remount with the same key gets it back. Without one, the view gets a session of its own, closed when the view unmounts |
 | `handleAudioFocus` | `boolean` | `false` | Automatically manage Android audio focus for media playback |
 | `contentBlockingEnabled` | `boolean` | `undefined` | Enable content blocking features (Gecko's built-in tracking protection) |
 | `cookieBannerMode` | `'reject'` \| `'accept'` \| `'none'` | `'reject'` | Cookie banner handling mode |
@@ -194,7 +194,8 @@ await geckoRef.current?.sendWebExtensionMessage(
 );
 
 // Lifecycle
-geckoRef.current?.shutdown();
+geckoRef.current?.closeSession(); // this view's session
+geckoRef.current?.shutdown();     // the runtime and every session in the process
 ```
 
 ## Advanced Usage Examples
@@ -216,6 +217,15 @@ function PersistentBrowser() {
   );
 }
 ```
+
+A session with a `sessionKey` stays open after its view unmounts, until
+`closeSession()`, `shutdown()` or the AAOS playback gate closes it. Without a
+`sessionKey`, each `GeckoView` gets a session of its own, which closes when the
+view unmounts: the page and its media stop, and its saved snapshots are
+deleted. StrictMode's double-invoked effects and a Fast Refresh that keeps
+state don't close it.
+Give a view a `sessionKey` to keep its page, or its audio, alive after it
+unmounts. See [docs/ADVANCED.md](docs/ADVANCED.md#session-management).
 
 ### Media Playback with Audio Focus
 

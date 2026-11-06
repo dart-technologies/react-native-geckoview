@@ -39,6 +39,10 @@ class GeckoViewManager :
     override fun setSessionKey(view: GeckoView, sessionKey: String?) =
         impl.setSessionKey(view, sessionKey)
 
+    @ReactProp(name = "closeSessionOnDrop")
+    override fun setCloseSessionOnDrop(view: GeckoView, value: Boolean) =
+        impl.setCloseSessionOnDrop(view, value)
+
     @ReactProp(name = "source")
     override fun setSource(view: GeckoView, source: ReadableMap?) =
         impl.setSource(view, source)

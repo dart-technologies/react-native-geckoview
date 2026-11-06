@@ -3,6 +3,10 @@ import type { CodegenTypes, HostComponent, ViewProps } from 'react-native';
 
 interface NativeProps extends ViewProps {
     sessionKey?: string;
+    // Internal: the JS wrapper sets it when it generated `sessionKey` itself.
+    // No other view can bind that key, so the native view closes the session
+    // when React Native drops it instead of leaving it pooled.
+    closeSessionOnDrop?: boolean;
     source?: { uri: string };
     handleAudioFocus?: boolean;
     contentBlockingEnabled?: boolean;

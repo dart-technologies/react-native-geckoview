@@ -1736,6 +1736,21 @@ class GeckoViewModuleTest {
     }
 
     @Test
+    fun `dropping the view of a session the JS wrapper keyed cancels its saves and deletes its snapshots`() {
+        // That session closes with its view, like any other close.
+        val capture = captureInFlight()
+        val view: GeckoView = mockk(relaxed = true)
+        every { view.session } returns GeckoSessionManager.getOpenSession("session-a")
+        val manager = GeckoViewManagerImpl()
+        manager.setCloseSessionOnDrop(view, true)
+
+        manager.onDropViewInstance(view)
+
+        assertFalse(GeckoSessionManager.getAllSessions().containsKey("session-a"))
+        assertSnapshotsDropped(capture, "VIEW_NOT_FOUND")
+    }
+
+    @Test
     fun `a save finishing after the playback gate closes, before its session does, rejects`() {
         // The restriction closes sessions from a post to the UI thread; the
         // snapshot executor can finish a save before that post runs.
