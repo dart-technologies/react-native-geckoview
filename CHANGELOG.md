@@ -57,7 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and a late play or activation still reached JS.
 - View events are never coalesced, so two in a row for one view (such as the
   `activated` and `play` a view gets when it binds a playing session) both
-  reach JS.
+  reach JS. React Native 0.88 already delivers them uncoalesced, since they
+  carry no surface id, so nothing changes there; this keeps it so if that
+  changes.
 - Capture snapshots on the UI thread.
 - Shutdown and the AAOS playback restriction now drop the snapshots of every
   session they close, as `closeSession` does: a save in flight rejects instead
