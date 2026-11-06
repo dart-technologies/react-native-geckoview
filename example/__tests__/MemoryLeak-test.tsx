@@ -15,14 +15,12 @@ import React, { useState, useEffect, ReactElement } from 'react';
 import { render, waitFor, act, RenderResult } from '@testing-library/react-native';
 import { NativeModules } from 'react-native';
 import GeckoView from 'react-native-geckoview';
-import { clearFabricGlobals, GeckoViewModuleMock } from './testUtils';
+import { GeckoViewModuleMock } from './testUtils';
 
 // Use shared mock setup
-jest.mock('react-native', () => require('./testUtils').setupReactNativeMock());
 
 describe('Memory Leak Tests', () => {
     beforeEach(() => {
-        clearFabricGlobals();
         jest.clearAllMocks();
     });
 
@@ -38,7 +36,7 @@ describe('Memory Leak Tests', () => {
             sessionKeys.push(sessionKey);
 
             // Create component
-            const { unmount }: RenderResult = render(
+            const { unmount }: RenderResult = await render(
                 <GeckoView
                     source={{ uri: 'https://example.com' }}
                     sessionKey={sessionKey}
@@ -52,7 +50,7 @@ describe('Memory Leak Tests', () => {
             });
 
             // Destroy component
-            unmount();
+            await unmount();
 
             // Allow garbage collection
             await act(async () => {
@@ -73,7 +71,7 @@ describe('Memory Leak Tests', () => {
 
         // Mount and unmount multiple times with same session key
         for (let i = 0; i < 50; i++) {
-            const { unmount }: RenderResult = render(
+            const { unmount }: RenderResult = await render(
                 <GeckoView
                     source={{ uri: 'https://mozilla.org' }}
                     sessionKey={sessionKey}
@@ -84,7 +82,7 @@ describe('Memory Leak Tests', () => {
                 await new Promise<void>(resolve => setTimeout(resolve, 20));
             });
 
-            unmount();
+            await unmount();
         }
 
         // Session should be preserved but view resources cleaned up
@@ -108,14 +106,14 @@ describe('Memory Leak Tests', () => {
             components.push(<TestComponent key={i} id={i} />);
         }
 
-        const { unmount }: RenderResult = render(<>{components}</>);
+        const { unmount }: RenderResult = await render(<>{components}</>);
 
         await act(async () => {
             await new Promise<void>(resolve => setTimeout(resolve, 100));
         });
 
         // Cleanup all at once
-        unmount();
+        await unmount();
 
         await act(async () => {
             await new Promise<void>(resolve => setTimeout(resolve, 50));
@@ -133,7 +131,7 @@ describe('Memory Leak Tests', () => {
             onMediaSessionAction: jest.fn(),
         };
 
-        const { unmount }: RenderResult = render(
+        const { unmount }: RenderResult = await render(
             <GeckoView
                 source={{ uri: 'https://example.com' }}
                 {...eventHandlers}
@@ -144,7 +142,7 @@ describe('Memory Leak Tests', () => {
             await new Promise<void>(resolve => setTimeout(resolve, 50));
         });
 
-        unmount();
+        await unmount();
 
         // After unmount, no new events should be processed
         // In production, verify native side cleanup
@@ -173,14 +171,14 @@ describe('Memory Leak Tests', () => {
             );
         };
 
-        const { unmount }: RenderResult = render(<TestComponent />);
+        const { unmount }: RenderResult = await render(<TestComponent />);
 
         // Let it run through several URL changes
         await act(async () => {
             await new Promise<void>(resolve => setTimeout(resolve, 1000));
         });
 
-        unmount();
+        await unmount();
 
         console.log('✅ Handled rapid URL changes without issues');
     });

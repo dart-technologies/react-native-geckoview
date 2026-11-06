@@ -1,17 +1,26 @@
 # Advanced Usage Guide
 
-This guide covers advanced features of `react-native-geckoview` including Web Extensions, custom prompt handling, and performance optimization.
+This guide covers advanced features of `react-native-geckoview` including
+Web Extensions, custom prompt handling, security configuration, and
+performance optimization.
 
 ## 1. Web Extensions
 
-GeckoView supports standard WebExtensions (similar to Chrome/Firefox extensions). This allows you to inject scripts, modify content, and communicate between the web page and React Native.
+GeckoView supports standard WebExtensions (similar to Chrome/Firefox
+extensions). This allows you to inject scripts, modify content, and
+communicate between the web page and React Native.
 
 ### Installation
 
-Extensions must be packaged as `.xpi` files or a directory containing `manifest.json`.
+Extensions must be packaged as `.xpi` files or a directory containing
+`manifest.json`.
 
-1.  **Place Extension Assets**: Add your extension files to `android/app/src/main/assets/extensions/`.
-2.  **Install in React Native**:
+1.  **Place extension assets** in `android/app/src/main/assets/`.
+2.  **Pass the relative asset path** to `installWebExtension`. The library
+    resolves it against the APK's `assets/` via `resource://android/assets/<path>`.
+3.  **Path validation applies**: `../`, URL-encoded traversal (`%2e`, `%2f`,
+    `%5c`), null bytes, backslashes, and absolute paths are rejected — the
+    promise rejects with `INVALID_ASSET_PATH`.
 
 ```javascript
 import { useRef, useEffect } from 'react';
@@ -21,25 +30,44 @@ function ExtensionBrowser() {
   const geckoRef = useRef(null);
 
   useEffect(() => {
-    // Install from Android assets
-    geckoRef.current?.installWebExtension('resource://android/assets/extensions/my-extension/');
+    (async () => {
+      try {
+        // Relative to assets/ — the library prepends resource://android/assets/
+        await geckoRef.current?.installWebExtension('extensions/my-extension');
+      } catch (e) {
+        console.warn('Extension install failed:', e); // INVALID_ASSET_PATH or native error
+      }
+    })();
   }, []);
 
   return <GeckoView ref={geckoRef} source={{ uri: 'https://example.com' }} />;
 }
 ```
 
+### Update-prompt gate
+
+The runtime installs a `WebExtensionController.PromptDelegate` that:
+- Denies installs of extension IDs not on the library's allowlist.
+- Denies updates that request new permissions or origins (closes the
+  "compromised-upstream-bump" attack).
+
+If you need to add a new bundled extension, update `allowedExtensionIds`
+in `GeckoRuntimeManager.kt` AND ship a signed update channel — the gate
+does not accept arbitrary installed extensions by design.
+
 ### Messaging
 
 Communication between the extension and React Native uses the `nativeMessaging` API.
 
-**In Extension (`background.js`):**
+**In Extension (`background.js` or content script):**
 ```javascript
+const port = browser.runtime.connectNative('react_native_geckoview');
+
 // Send message to React Native
-browser.runtime.sendNativeMessage('browser', { type: 'greeting', content: 'Hello from Extension' });
+browser.runtime.sendNativeMessage('react_native_geckoview', { type: 'greeting', content: 'Hello from Extension' });
 
 // Receive message from React Native
-browser.runtime.onNativeMessage.addListener((message) => {
+port.onMessage.addListener((message) => {
   console.log('Received from RN:', message);
 });
 ```
@@ -53,9 +81,64 @@ browser.runtime.onNativeMessage.addListener((message) => {
   }}
 />
 
-// Send message to extension
-geckoRef.current?.sendWebExtensionMessage({ type: 'update', data: 'New data' });
+// Send message to a connected extension port in this session
+await geckoRef.current?.sendWebExtensionMessage(
+  'my-extension@example.com',
+  JSON.stringify({ type: 'update', data: 'New data' })
+);
 ```
+
+### Spatial Navigation (Android TV / D-pad)
+
+For Android TV, Automotive (AAOS), and other D-pad-driven surfaces, the
+`@dart-technologies/spatial-navigation-geckoview` extension provides
+focus management, directional navigation, and D-pad-center activation
+inside the rendered page. Use extension **3.1.0**.
+
+**Bundling.** Place the extension's `manifest.json`, `spatial_navigation.js`,
+and `background.js` under the host app's
+`android/src/main/assets/spatial_navigation/`, then install it after mount:
+
+```javascript
+await geckoRef.current?.installWebExtension('spatial_navigation');
+```
+
+**Built-in bridge.** The extension relays to a native-messaging app id that
+is pinned to `flutter_geckoview` and cannot be reconfigured from the host.
+This library registers its message delegate under **both**
+`react_native_geckoview` and `flutter_geckoview` (see
+`WebExtensionController.NATIVE_APP_IDS`), so the extension's two host-facing
+messages work out of the box with no glue code:
+
+- `simulateClick` — D-pad center synthesizes a touch/click at the focused
+  element's coordinates.
+- `focusExit` — when focus leaves the page boundary, fires the
+  `onFocusExit` prop (`{ direction: 'up' | 'down' | 'left' | 'right' }`) so
+  the host can move focus to native UI.
+
+```javascript
+<GeckoView
+  ref={geckoRef}
+  source={{ uri: 'https://example.com' }}
+  onFocusExit={(e) => moveNativeFocus(e.nativeEvent.direction)}
+/>
+```
+
+**3.0.x → 3.1.0 migration.** In 3.1.0, `boundaryScrollBehavior` defaults to
+`'scroll'` (it was `'exit'` in 3.0.x). If you relied on boundary `onFocusExit`
+events to hand focus back to native UI, restore the old behavior by setting
+the config before the extension's script runs (e.g. via an injected page
+script):
+
+```javascript
+window.spatialNavConfig = { boundaryScrollBehavior: 'exit' };
+```
+
+**Retire any prior Expo config plugin.** The `simulateClick`/`focusExit`
+bridge is now built into this library. If a host app previously patched the
+library with an Expo config plugin that injected this behavior (or overwrote
+`WebExtensionController.kt`), **retire that plugin** — leaving it enabled will
+clobber the built-in bridge.
 
 ---
 
@@ -101,28 +184,164 @@ function Browser() {
 
 ### HTTP Authentication
 
-Handle `onGeckoAuth` to support Basic/Digest authentication.
+Handle `onGeckoAuth` to support Basic/Digest authentication. The username and
+password are passed as the 4th and 5th positional arguments to `resolvePrompt`
+— the signature is `resolvePrompt(promptId, confirm, text?, username?, password?)`.
 
 ```javascript
 const handleAuth = (event) => {
   const { promptId, authOptions } = event.nativeEvent;
   // Show login modal...
   // On submit:
-  geckoRef.current?.resolvePrompt(promptId, true, null, {
-    username: 'user',
-    password: 'pass'
-  });
+  geckoRef.current?.resolvePrompt(promptId, true, undefined, 'user', 'pass');
 };
 ```
 
 ---
 
-## 3. Performance Optimization
+## 3. Security configuration
+
+### URL allowlist on `loadUrl` / `setSource`
+
+Only `http`, `https`, and `about` schemes reach the session. `javascript:`,
+`data:`, `file:`, `content:`, and `blob:` are silently dropped. If your app
+forwards any user-controlled URL (deep link, QR scan, paste handler) to
+`loadUrl`, this protects you from trivial XSS — but you should NOT rely on
+the drop being silent if UX requires notifying the user. Validate upstream.
+
+### Navigation gate (`onLoadRequest`)
+
+The library registers `onLoadRequest` and `onSubframeLoadRequest` handlers
+that:
+- Allow `http`, `https`, `about`.
+- Deny `javascript:`, `data:`, `file:`, `content:`, `blob:` (all frames).
+- Route `intent://` top-frame navigations to the sanitized dialog flow
+  (subframes can never trigger `intent://` — attacker frames can't
+  silently launch external apps).
+- Deny top-frame `market:` and `geo:` navigations and ask before opening the
+  Play Store or a maps app; Play Store and maps web URLs ask the same way.
+
+No hook is currently exposed to override this from JS. If you need a
+custom navigation policy, fork the library or file an issue.
+
+### Intent-URI sanitization
+
+When a page navigates to `intent://...`, the library parses via
+`Intent.parseUri(URL, URI_INTENT_SCHEME)` and then:
+- Clears `selector` and `component` (prevents hijacking to a specific receiver).
+- Masks `FLAG_GRANT_{READ,WRITE,PERSISTABLE,PREFIX}_URI_PERMISSION` (prevents
+  attacker-initiated URI grants).
+- Removes `CATEGORY_DEFAULT`, adds `CATEGORY_BROWSABLE`.
+- Rejects intents whose `data` scheme is anything other than `http` or `https`.
+
+Custom-scheme intent payloads are denied by default. If your app needs one,
+add a narrow allowlist in native code instead of forwarding arbitrary schemes.
+
+### Runtime security options
+
+Security-sensitive runtime features are off by default. Configure them before
+the first `GeckoView` mount:
+
+```typescript
+import { configureGeckoViewSecurity } from 'react-native-geckoview';
+
+await configureGeckoViewSecurity({
+  allowDrm: false,
+  allowAutoplay: false,
+  enableConsoleOutput: false,
+});
+```
+
+Set `allowDrm` only when the app needs Encrypted Media Extensions. Set
+`allowAutoplay` only when drive-by playback is intended. `enableConsoleOutput`
+only affects debug builds; release builds keep page console output out of
+logcat.
+
+When the runtime starts, the library sets these Gecko prefs through GeckoView's
+`GeckoPreferenceController` (default branch, re-applied on every launch):
+
+| Pref | Default | With opt-in |
+|---|---|---|
+| `media.autoplay.default` | `5` (block audible and inaudible) | `0` with `allowAutoplay` |
+| `media.geckoview.autoplay.request` | `true` (blocked autoplay reaches `onPermissionRequest` as `autoplay_audible` / `autoplay_inaudible`) | `false` with `allowAutoplay` |
+| `media.eme.enabled` | `false` | `true` with `allowDrm` |
+
+Gecko has no command-line pref switch, so earlier builds that passed these as
+`--setpref=` runtime arguments never applied them.
+
+### Content-process sandbox
+
+All builds run with GeckoView's default content-process sandbox. The library
+passes no command-line arguments to Gecko, so no sandbox-disabling switch can
+reach it.
+
+Do NOT add sandbox-disable flags without understanding the trade-off: removing
+the sandbox means any Gecko RCE gains full app-context code execution.
+
+### Extension signature verification
+
+Signature verification is ON by default at the runtime level. Bundled
+extensions installed via `installWebExtension(<assetPath>)` use
+`WebExtensionController.installBuiltIn`, which bypasses the signature check
+for APK-packed `resource://` URIs by design. Do NOT re-enable
+`xpinstall.signatures.required=false` — the library's current posture
+assumes it stays ON.
+
+---
+
+## 4. Performance Optimization
 
 ### Session Management
 
-*   **Reuse Sessions**: Use `sessionKey` to persist state (cookies, history, cache) across component unmounts. This avoids expensive re-initialization.
-*   **Limit Concurrent Sessions**: Each `GeckoSession` consumes significant memory. Destroy unused sessions using `GeckoViewModule.shutdown()` if necessary, though React Native's lifecycle usually handles this.
+*   **Reuse Sessions**: Use `sessionKey` to persist state (cookies, history, cache) across component unmounts. This avoids expensive re-initialization. A page with a `sessionKey` keeps playing after its view unmounts. With `handleAudioFocus`, the library keeps handling the session's audio focus while no view shows it, until the session closes (`closeSession()`, `shutdown()` or the AAOS playback gate) or its content process dies: it holds focus while the page plays (taking it again if the page starts playing later) and pauses the page on a focus loss. A view that binds the same `sessionKey` carries that focus on without requesting it again, and gets `onMediaSessionAction` events `activated` and `play` for media already active or playing (not `metadata`, which isn't repeated). The carry-over is short when the remount also passes `source`: the view loads that URI into the pooled session, which stops the page's media, and the focus is given up as for any stop.
+*   **Views without a `sessionKey`**: each gets a session of its own, under a key the library generates and no other view can bind. That session closes when React Native removes the view, as `closeSession()` would close it: the page and its media stop, its audio focus is given up, a `captureSnapshot` still saving rejects with `VIEW_NOT_FOUND`, and the snapshots saved for it are deleted. An `evaluateJavaScript` still pending rejects too: with `EVAL_BRIDGE_UNAVAILABLE` when its port disconnects, or `EVAL_TIMEOUT` after 10 s. StrictMode's double-invoked effects and a Fast Refresh that keeps state leave the view in place, so they don't close the session; a Fast Refresh that remounts the component closes it, and the remount gets a session of its own. A host that also calls `closeSession()` when the view unmounts needs no change: closing the same session twice is harmless, in either order. The close relies on React Native removing a native view only when its component unmounts, which is what React Native 0.88 does on Android with its default feature flags. With `useTraitHiddenOnAndroid` (which removes `display: none` views) or `enableViewCulling` turned on, React Native can remove and recreate the view of a component that stays mounted, and a view without a `sessionKey` then starts over in a new session: give such a view a `sessionKey`.
+*   **Limit Concurrent Sessions**: Each `GeckoSession` consumes significant memory. Close a view's session with `ref.closeSession()`; `ref.shutdown()` tears down the runtime and every session in the process.
+*   **Closed sessions stay closed**: sessions are created and opened only when a mounted view binds its `sessionKey`. After `closeSession()`, or once a view without a `sessionKey` unmounts, ref methods on that view never rebuild the session: `reload`, `goBack`, `goForward`, `stop`, `loadUrl` and `setUserAgent` do nothing, `evaluateJavaScript` rejects with `EVAL_BRIDGE_UNAVAILABLE` and `captureSnapshot` rejects with `VIEW_NOT_FOUND`. Remount the `GeckoView` (for example by changing its React `key`) to get a fresh session. A session GeckoView closed itself because its content process died is reopened when a view binds its `sessionKey` again, and loads that view's `source` afresh; see [Content-process crashes](#content-process-crashes).
+*   **AAOS playback gate**: while the host has called `GeckoSessionManager.setPlaybackAllowed(false)`, every session is closed and the `sessionKey` and `source` props are dropped, not queued. `setPlaybackAllowed(true)` never reopens a session or resumes media, so remount the `GeckoView` once playback is allowed again.
+
+### Content-process crashes
+
+GeckoView closes a session itself when its content process crashes, or when the system kills it, often to reclaim memory. The view showing the session goes blank, and media that was playing stops; no `onMediaSessionAction` `pause` or `stop` is guaranteed to follow. The library gives up any audio focus it held for the session, then fires `onContentProcessGone` on that view, with `reason` `'crash'` or `'kill'`. A pooled session that no view shows fires nothing; the next view to bind its `sessionKey` reopens it.
+
+The mounted view keeps the closed session, and `ref.reload()` doesn't bring the page back, because it goes to that closed session. Remount the view to recover, for example by changing its React `key`:
+
+*   **Same `sessionKey`**: the pool reopens the session GeckoView closed (`GeckoSessionManager.ensureSessionOpen`), and the view loads its `source` afresh. The page's history and in-memory state are lost; cookies and the cache belong to the runtime, so they survive.
+*   **Fresh `sessionKey`**: the view gets a new session. A view reads `sessionKey` only when it mounts, so this takes a remount too. A view mounted without a `sessionKey` gets a new generated key each time it mounts, so remounting it is always this case. Call `closeSession()` on the old view first, so the dead session doesn't stay pooled under the old key.
+
+Don't call `closeSession()` and remount with the same `sessionKey` together. `closeSession()` reaches the UI thread by way of the native-modules thread, so it can close the reopened session after the new view has bound it: the view stays blank, and no event fires. The same goes for a `closeSession()` in an unmount cleanup, such as a `useEffect` cleanup, that runs during the remount.
+
+A page that crashes its content process each time it loads fires the event again after every remount, so cap the deaths that come in a row, not those over the view's lifetime: an app that runs for days, as on a TV or in a car, sees the occasional low-memory kill.
+
+```javascript
+const MAX_IN_A_ROW = 3;
+const IN_A_ROW_MS = 60_000; // a death later than this after the last starts a new count
+
+function ResilientBrowser() {
+  const [deaths, setDeaths] = useState({ mount: 0, inARow: 0, last: 0 });
+
+  if (deaths.inARow > MAX_IN_A_ROW) {
+    return <ErrorBanner message="This page keeps crashing." />;
+  }
+
+  return (
+    <GeckoView
+      key={deaths.mount} // a new key remounts the view
+      sessionKey="main"
+      source={{ uri: 'https://example.com' }}
+      onContentProcessGone={(e) => {
+        console.warn('Content process gone:', e.nativeEvent.reason); // 'crash' | 'kill'
+        const now = Date.now();
+        setDeaths((d) => ({
+          mount: d.mount + 1, // the pool reopens "main" for the new view
+          inARow: now - d.last < IN_A_ROW_MS ? d.inARow + 1 : 1,
+          last: now,
+        }));
+      }}
+      style={{ flex: 1 }}
+    />
+  );
+}
+```
 
 ### Rendering
 
@@ -132,21 +351,24 @@ const handleAuth = (event) => {
 ### Memory Leaks
 
 *   **Event Listeners**: Ensure you are not creating closures that hold onto `GeckoView` refs unnecessarily.
-*   **Large Snapshots**: Avoid frequent calls to `captureSnapshot()` with high resolutions, as this creates large Bitmaps in memory.
+*   **Large Snapshots**: Avoid frequent calls to `captureSnapshot()` with high resolutions, as this creates large Bitmaps in memory. The capture runs on the UI thread and the PNG encode on a background thread; one save runs while one more waits, and a capture beyond that rejects with `SNAPSHOT_BUSY`. A save still in flight when its session closes rejects with `VIEW_NOT_FOUND`, or with `PLAYBACK_RESTRICTED` once the AAOS playback gate closes, and leaves no file behind. Closing a session, through `closeSession()`, `shutdown()`, the gate or the unmount of a view without a `sessionKey`, also deletes the snapshots saved for it: copy a snapshot you still need after its view unmounts.
 
 ---
 
-## 4. Fabric (New Architecture)
+## 5. Fabric (New Architecture)
 
-`react-native-geckoview` supports the New Architecture (Fabric) on React Native 0.81+.
+`react-native-geckoview` **requires** the New Architecture (Fabric) on
+React Native 0.85+. Paper is not supported.
 
 ### Verification
 
-To verify Fabric is active:
-1.  Enable `newArchEnabled=true` in `android/gradle.properties`.
-2.  Run the app.
-3.  Check Metro logs for "Fabric" tags.
-4.  If the component renders successfully without falling back to the Paper renderer warning, Fabric is working.
+1.  Run the app (`yarn android`).
+2.  Metro logs should include `Running "example" with {"fabric":true}`.
+3.  If the component renders a red "GeckoView failed to render" panel,
+    the codegen library didn't load — rebuild with `./gradlew clean`
+    and ensure `newArchEnabled=true` is set in the consumer app (the
+    flag is ignored by the RN Gradle Plugin but some downstream tools
+    still read it).
 
 ### Troubleshooting
 

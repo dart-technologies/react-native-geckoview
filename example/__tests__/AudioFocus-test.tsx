@@ -17,20 +17,18 @@ import React, { useRef } from 'react';
 import { render, waitFor, act } from '@testing-library/react-native';
 import { NativeModules } from 'react-native';
 import GeckoView, { GeckoViewRef } from 'react-native-geckoview';
-import { clearFabricGlobals, fixtures } from './testUtils';
+import { fixtures } from './testUtils';
 
 // Use shared mock setup
-jest.mock('react-native', () => require('./testUtils').setupReactNativeMock());
 
 describe('Audio Focus Tests', () => {
     beforeEach(() => {
-        clearFabricGlobals();
         jest.clearAllMocks();
     });
 
     describe('handleAudioFocus Prop', () => {
-        it('should render with handleAudioFocus=true', () => {
-            const { getByTestId } = render(
+        it('should render with handleAudioFocus=true', async () => {
+            const { getByTestId } = await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     handleAudioFocus={true}
@@ -41,8 +39,8 @@ describe('Audio Focus Tests', () => {
             expect(getByTestId('gecko-audio-focus')).toBeDefined();
         });
 
-        it('should render with handleAudioFocus=false', () => {
-            const { getByTestId } = render(
+        it('should render with handleAudioFocus=false', async () => {
+            const { getByTestId } = await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     handleAudioFocus={false}
@@ -53,9 +51,9 @@ describe('Audio Focus Tests', () => {
             expect(getByTestId('gecko-no-audio-focus')).toBeDefined();
         });
 
-        it('should default to handleAudioFocus=true when not specified', () => {
+        it('should default to handleAudioFocus=true when not specified', async () => {
             // GeckoView should work without specifying handleAudioFocus
-            const { getByTestId } = render(
+            const { getByTestId } = await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     testID="gecko-default-audio"
@@ -70,7 +68,7 @@ describe('Audio Focus Tests', () => {
         it('should handle onMediaSessionAction callback', async () => {
             const onMediaSessionAction = jest.fn();
 
-            const { getByTestId } = render(
+            const { getByTestId } = await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onMediaSessionAction={onMediaSessionAction}
@@ -84,8 +82,8 @@ describe('Audio Focus Tests', () => {
         });
 
         it('should not crash if onMediaSessionAction is not provided', () => {
-            expect(() =>
-                render(
+            expect(async () =>
+                await render(
                     <GeckoView
                         source={{ uri: fixtures.urls.example }}
                         handleAudioFocus={true}
@@ -96,8 +94,8 @@ describe('Audio Focus Tests', () => {
     });
 
     describe('Audio Focus with Media Playback', () => {
-        it('should allow video playback with audio focus enabled', () => {
-            const { getByTestId } = render(
+        it('should allow video playback with audio focus enabled', async () => {
+            const { getByTestId } = await render(
                 <GeckoView
                     source={{ uri: 'https://example.com/video.html' }}
                     handleAudioFocus={true}
@@ -108,8 +106,8 @@ describe('Audio Focus Tests', () => {
             expect(getByTestId('gecko-video')).toBeDefined();
         });
 
-        it('should allow audio-only content with audio focus enabled', () => {
-            const { getByTestId } = render(
+        it('should allow audio-only content with audio focus enabled', async () => {
+            const { getByTestId } = await render(
                 <GeckoView
                     source={{ uri: 'https://example.com/audio.html' }}
                     handleAudioFocus={true}
@@ -120,8 +118,8 @@ describe('Audio Focus Tests', () => {
             expect(getByTestId('gecko-audio')).toBeDefined();
         });
 
-        it('should handle multiple GeckoViews with different audio focus settings', () => {
-            const { getByTestId } = render(
+        it('should handle multiple GeckoViews with different audio focus settings', async () => {
+            const { getByTestId } = await render(
                 <>
                     <GeckoView
                         source={{ uri: fixtures.urls.example }}
@@ -142,8 +140,8 @@ describe('Audio Focus Tests', () => {
     });
 
     describe('Audio Focus Lifecycle', () => {
-        it('should cleanup audio focus when unmounted', () => {
-            const { unmount, getByTestId } = render(
+        it('should cleanup audio focus when unmounted', async () => {
+            const { unmount, getByTestId } = await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     handleAudioFocus={true}
@@ -154,11 +152,11 @@ describe('Audio Focus Tests', () => {
             expect(getByTestId('gecko-lifecycle')).toBeDefined();
 
             // Unmount should not throw
-            expect(() => unmount()).not.toThrow();
+            expect(async () => await unmount()).not.toThrow();
         });
 
-        it('should handle remount with audio focus', () => {
-            const { rerender, getByTestId } = render(
+        it('should handle remount with audio focus', async () => {
+            const { rerender, getByTestId } = await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     handleAudioFocus={true}
@@ -167,7 +165,7 @@ describe('Audio Focus Tests', () => {
             );
 
             // Rerender with same settings
-            rerender(
+            await rerender(
                 <GeckoView
                     source={{ uri: fixtures.urls.mozilla }}
                     handleAudioFocus={true}
@@ -178,8 +176,8 @@ describe('Audio Focus Tests', () => {
             expect(getByTestId('gecko-remount')).toBeDefined();
         });
 
-        it('should handle toggling audio focus on same component', () => {
-            const { rerender, getByTestId } = render(
+        it('should handle toggling audio focus on same component', async () => {
+            const { rerender, getByTestId } = await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     handleAudioFocus={true}
@@ -188,7 +186,7 @@ describe('Audio Focus Tests', () => {
             );
 
             // Toggle off
-            rerender(
+            await rerender(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     handleAudioFocus={false}
@@ -197,7 +195,7 @@ describe('Audio Focus Tests', () => {
             );
 
             // Toggle back on
-            rerender(
+            await rerender(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     handleAudioFocus={true}
@@ -213,7 +211,7 @@ describe('Audio Focus Tests', () => {
         it('should handle play action event', async () => {
             const onMediaSessionAction = jest.fn();
 
-            render(
+            await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onMediaSessionAction={onMediaSessionAction}
@@ -229,7 +227,7 @@ describe('Audio Focus Tests', () => {
         it('should handle pause action event', async () => {
             const onMediaSessionAction = jest.fn();
 
-            render(
+            await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onMediaSessionAction={onMediaSessionAction}
@@ -243,7 +241,7 @@ describe('Audio Focus Tests', () => {
         it('should handle stop action event', async () => {
             const onMediaSessionAction = jest.fn();
 
-            render(
+            await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onMediaSessionAction={onMediaSessionAction}
@@ -257,7 +255,7 @@ describe('Audio Focus Tests', () => {
         it('should handle activated action event', async () => {
             const onMediaSessionAction = jest.fn();
 
-            render(
+            await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onMediaSessionAction={onMediaSessionAction}
@@ -271,7 +269,7 @@ describe('Audio Focus Tests', () => {
         it('should handle deactivated action event', async () => {
             const onMediaSessionAction = jest.fn();
 
-            render(
+            await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onMediaSessionAction={onMediaSessionAction}

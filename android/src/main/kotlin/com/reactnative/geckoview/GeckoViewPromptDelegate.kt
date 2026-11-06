@@ -15,32 +15,7 @@ class GeckoViewPromptDelegate(
         session: GeckoSession,
         prompt: GeckoSession.PromptDelegate.AlertPrompt
     ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? {
-        val message = prompt.message ?: ""
-        if (message.startsWith("__EVAL_RESULT__:") || message.startsWith("__EVAL_ERROR__:")) {
-            val parts = message.split(":", limit = 3)
-            if (parts.size >= 3) {
-                val type = parts[0]
-                val uuid = parts[1]
-                val payload = parts[2]
-                
-                if (type == "__EVAL_RESULT__") {
-                    module.resolveEval(uuid, payload, null)
-                } else {
-                    module.resolveEval(uuid, null, payload)
-                }
-                
-                // Use reflection to call confirm() since it's protected
-                try {
-                    val method = prompt.javaClass.getDeclaredMethod("confirm")
-                    method.isAccessible = true
-                    val response = method.invoke(prompt) as? GeckoSession.PromptDelegate.PromptResponse
-                    return GeckoResult.fromValue(response)
-                } catch (e: Exception) {
-                    return null
-                }
-            }
-        }
-        return handlePrompt(prompt, "onGeckoAlert", message, null)
+        return handlePrompt(prompt, "onGeckoAlert", prompt.message ?: "", null)
     }
 
     override fun onButtonPrompt(

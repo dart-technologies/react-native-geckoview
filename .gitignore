@@ -24,6 +24,7 @@ yarn-debug.log
 build/
 .idea/
 .gradle/
+.kotlin/
 local.properties
 *.iml
 *.hprof
@@ -82,9 +83,21 @@ dist/
 *.swp
 *.swo
 *~
+# Eclipse / Buildship
+.settings/
+.project
+.classpath
+
+# ===================
+# Tooling scratch
+# ===================
+.playwright-mcp/
 
 # ===================
 # Logs
 # ===================
 logs/
 *.log
+
+# Expo host tooling may inspect this package during prebuild.
+.expo/

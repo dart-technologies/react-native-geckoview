@@ -7,6 +7,7 @@
  * - Error category mapping
  * - Error message formatting
  * - Error recovery scenarios
+ * - onContentProcessGone reaching the native component
  */
 
 import '../setup';
@@ -15,22 +16,20 @@ import React from 'react';
 import { render, waitFor } from '@testing-library/react-native';
 import { NativeModules } from 'react-native';
 import GeckoView from 'react-native-geckoview';
-import { clearFabricGlobals, fixtures } from './testUtils';
+import { fixtures } from './testUtils';
 
 // Use shared mock setup
-jest.mock('react-native', () => require('./testUtils').setupReactNativeMock());
 
 describe('Error Delegate Tests', () => {
     beforeEach(() => {
-        clearFabricGlobals();
         jest.clearAllMocks();
     });
 
     describe('Error Event Handler', () => {
-        it('should register onPageError callback', () => {
+        it('should register onPageError callback', async () => {
             const onPageError = jest.fn();
 
-            const { getByTestId } = render(
+            const { getByTestId } = await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onPageError={onPageError}
@@ -42,8 +41,8 @@ describe('Error Delegate Tests', () => {
         });
 
         it('should not crash if onPageError is not provided', () => {
-            expect(() =>
-                render(
+            expect(async () =>
+                await render(
                     <GeckoView
                         source={{ uri: fixtures.urls.example }}
                     />
@@ -51,11 +50,11 @@ describe('Error Delegate Tests', () => {
             ).not.toThrow();
         });
 
-        it('should render with both onPageError and onGeckoPageStop callbacks', () => {
+        it('should render with both onPageError and onGeckoPageStop callbacks', async () => {
             const onPageError = jest.fn();
             const onGeckoPageStop = jest.fn();
 
-            const { getByTestId } = render(
+            const { getByTestId } = await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onPageError={onPageError}
@@ -81,10 +80,10 @@ describe('Error Delegate Tests', () => {
         ];
 
         errorCategories.forEach(category => {
-            it(`should handle '${category}' error category`, () => {
+            it(`should handle '${category}' error category`, async () => {
                 const onPageError = jest.fn();
 
-                const { getByTestId } = render(
+                const { getByTestId } = await render(
                     <GeckoView
                         source={{ uri: fixtures.urls.example }}
                         onPageError={onPageError}
@@ -99,10 +98,10 @@ describe('Error Delegate Tests', () => {
     });
 
     describe('Error Codes', () => {
-        it('should handle SSL certificate error', () => {
+        it('should handle SSL certificate error', async () => {
             const onPageError = jest.fn();
 
-            render(
+            await render(
                 <GeckoView
                     source={{ uri: 'https://expired.badssl.com/' }}
                     onPageError={onPageError}
@@ -112,10 +111,10 @@ describe('Error Delegate Tests', () => {
             // Native would emit: { errorCode: ERROR_SECURITY_SSL }
         });
 
-        it('should handle connection timeout error', () => {
+        it('should handle connection timeout error', async () => {
             const onPageError = jest.fn();
 
-            render(
+            await render(
                 <GeckoView
                     source={{ uri: 'https://10.255.255.1/' }} // Non-routable IP
                     onPageError={onPageError}
@@ -125,10 +124,10 @@ describe('Error Delegate Tests', () => {
             // Native would emit: { errorCode: ERROR_NET_TIMEOUT }
         });
 
-        it('should handle unknown host error', () => {
+        it('should handle unknown host error', async () => {
             const onPageError = jest.fn();
 
-            render(
+            await render(
                 <GeckoView
                     source={{ uri: 'https://this-domain-definitely-does-not-exist-12345.com/' }}
                     onPageError={onPageError}
@@ -138,10 +137,10 @@ describe('Error Delegate Tests', () => {
             // Native would emit: { errorCode: ERROR_UNKNOWN_HOST }
         });
 
-        it('should handle malformed URI error', () => {
+        it('should handle malformed URI error', async () => {
             const onPageError = jest.fn();
 
-            render(
+            await render(
                 <GeckoView
                     source={{ uri: 'not-a-valid-url' }}
                     onPageError={onPageError}
@@ -153,10 +152,10 @@ describe('Error Delegate Tests', () => {
     });
 
     describe('Safe Browsing Errors', () => {
-        it('should handle malware URI error', () => {
+        it('should handle malware URI error', async () => {
             const onPageError = jest.fn();
 
-            render(
+            await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onPageError={onPageError}
@@ -167,10 +166,10 @@ describe('Error Delegate Tests', () => {
             // Native would emit: { errorCode: ERROR_SAFEBROWSING_MALWARE_URI }
         });
 
-        it('should handle phishing URI error', () => {
+        it('should handle phishing URI error', async () => {
             const onPageError = jest.fn();
 
-            render(
+            await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onPageError={onPageError}
@@ -181,10 +180,10 @@ describe('Error Delegate Tests', () => {
             // Native would emit: { errorCode: ERROR_SAFEBROWSING_PHISHING_URI }
         });
 
-        it('should handle harmful URI error', () => {
+        it('should handle harmful URI error', async () => {
             const onPageError = jest.fn();
 
-            render(
+            await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onPageError={onPageError}
@@ -201,7 +200,7 @@ describe('Error Delegate Tests', () => {
             const onPageError = jest.fn();
             const geckoRef = React.createRef<any>();
 
-            render(
+            await render(
                 <GeckoView
                     ref={geckoRef}
                     source={{ uri: fixtures.urls.example }}
@@ -220,7 +219,7 @@ describe('Error Delegate Tests', () => {
         it('should allow navigation to new URL after error', async () => {
             const onPageError = jest.fn();
 
-            const { rerender } = render(
+            const { rerender } = await render(
                 <GeckoView
                     source={{ uri: 'https://invalid-url-12345.test/' }}
                     onPageError={onPageError}
@@ -228,7 +227,7 @@ describe('Error Delegate Tests', () => {
             );
 
             // Navigate to valid URL
-            rerender(
+            await rerender(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onPageError={onPageError}
@@ -240,10 +239,10 @@ describe('Error Delegate Tests', () => {
     });
 
     describe('Error Event Data Structure', () => {
-        it('should expect error event with uri property', () => {
+        it('should expect error event with uri property', async () => {
             const onPageError = jest.fn();
 
-            render(
+            await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onPageError={onPageError}
@@ -253,10 +252,10 @@ describe('Error Delegate Tests', () => {
             // Native event structure: { uri: string }
         });
 
-        it('should expect error event with errorCode property', () => {
+        it('should expect error event with errorCode property', async () => {
             const onPageError = jest.fn();
 
-            render(
+            await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onPageError={onPageError}
@@ -266,10 +265,10 @@ describe('Error Delegate Tests', () => {
             // Native event structure: { errorCode: number }
         });
 
-        it('should expect error event with errorCategory property', () => {
+        it('should expect error event with errorCategory property', async () => {
             const onPageError = jest.fn();
 
-            render(
+            await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onPageError={onPageError}
@@ -279,10 +278,10 @@ describe('Error Delegate Tests', () => {
             // Native event structure: { errorCategory: string }
         });
 
-        it('should expect error event with errorMessage property', () => {
+        it('should expect error event with errorMessage property', async () => {
             const onPageError = jest.fn();
 
-            render(
+            await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onPageError={onPageError}
@@ -294,11 +293,11 @@ describe('Error Delegate Tests', () => {
     });
 
     describe('Error with Multiple Handlers', () => {
-        it('should work alongside onGeckoPageStart handler', () => {
+        it('should work alongside onGeckoPageStart handler', async () => {
             const onPageError = jest.fn();
             const onGeckoPageStart = jest.fn();
 
-            const { getByTestId } = render(
+            const { getByTestId } = await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onPageError={onPageError}
@@ -310,11 +309,11 @@ describe('Error Delegate Tests', () => {
             expect(getByTestId('gecko-multi-handler')).toBeDefined();
         });
 
-        it('should work alongside onGeckoProgressChange handler', () => {
+        it('should work alongside onGeckoProgressChange handler', async () => {
             const onPageError = jest.fn();
             const onGeckoProgressChange = jest.fn();
 
-            const { getByTestId } = render(
+            const { getByTestId } = await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onPageError={onPageError}
@@ -326,11 +325,11 @@ describe('Error Delegate Tests', () => {
             expect(getByTestId('gecko-progress-error')).toBeDefined();
         });
 
-        it('should work alongside onGeckoSecurityChange handler', () => {
+        it('should work alongside onGeckoSecurityChange handler', async () => {
             const onPageError = jest.fn();
             const onGeckoSecurityChange = jest.fn();
 
-            const { getByTestId } = render(
+            const { getByTestId } = await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onPageError={onPageError}
@@ -344,10 +343,10 @@ describe('Error Delegate Tests', () => {
     });
 
     describe('Rapid Error Scenarios', () => {
-        it('should handle rapid navigation to invalid URLs', () => {
+        it('should handle rapid navigation to invalid URLs', async () => {
             const onPageError = jest.fn();
 
-            const { rerender } = render(
+            const { rerender } = await render(
                 <GeckoView
                     source={{ uri: 'https://invalid1.test/' }}
                     onPageError={onPageError}
@@ -355,7 +354,7 @@ describe('Error Delegate Tests', () => {
             );
 
             for (let i = 2; i <= 5; i++) {
-                rerender(
+                await rerender(
                     <GeckoView
                         source={{ uri: `https://invalid${i}.test/` }}
                         onPageError={onPageError}
@@ -366,24 +365,24 @@ describe('Error Delegate Tests', () => {
             // Should not crash
         });
 
-        it('should handle alternating valid and invalid URLs', () => {
+        it('should handle alternating valid and invalid URLs', async () => {
             const onPageError = jest.fn();
 
-            const { rerender } = render(
+            const { rerender } = await render(
                 <GeckoView
                     source={{ uri: fixtures.urls.example }}
                     onPageError={onPageError}
                 />
             );
 
-            rerender(
+            await rerender(
                 <GeckoView
                     source={{ uri: 'https://invalid.test/' }}
                     onPageError={onPageError}
                 />
             );
 
-            rerender(
+            await rerender(
                 <GeckoView
                     source={{ uri: fixtures.urls.mozilla }}
                     onPageError={onPageError}
@@ -391,6 +390,25 @@ describe('Error Delegate Tests', () => {
             );
 
             // Should not crash
+        });
+    });
+
+    describe('Content Process Gone', () => {
+        it('passes onContentProcessGone to the native component', async () => {
+            const onContentProcessGone = jest.fn();
+
+            const { getByTestId } = await render(
+                <GeckoView
+                    source={{ uri: fixtures.urls.example }}
+                    onContentProcessGone={onContentProcessGone}
+                    testID="gecko-content-process"
+                />
+            );
+
+            // The native component itself carries the handler, so Fabric can
+            // deliver topContentProcessGone to it.
+            expect(getByTestId('gecko-content-process').props.onContentProcessGone)
+                .toBe(onContentProcessGone);
         });
     });
 });

@@ -42,21 +42,21 @@ describe('App', () => {
         mockGeckoViewRef.setUserAgent.mockClear();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         // Clear all pending timers before doing cleanup
         jest.clearAllTimers();
         // Manual cleanup since we're using pure import
-        cleanup();
+        await cleanup();
         jest.useRealTimers();
         jest.restoreAllMocks();
     });
 
-    it('renders without crashing', () => {
-        render(<App />);
+    it('renders without crashing', async () => {
+        await render(<App />);
     });
 
-    it('renders GeckoView component', () => {
-        const { getByTestId }: RenderResult = render(<App />);
+    it('renders GeckoView component', async () => {
+        const { getByTestId }: RenderResult = await render(<App />);
         expect(getByTestId('geckoview')).toBeTruthy();
     });
 
@@ -65,41 +65,41 @@ describe('App', () => {
         // A dedicated "starts with default URL" test was causing timeout issues
         // due to testing-library cleanup interactions with fake timers.
 
-        it('allows editing URL when focused', () => {
-            const { getByPlaceholderText } = render(<App />);
+        it('allows editing URL when focused', async () => {
+            const { getByPlaceholderText } = await render(<App />);
             const input = getByPlaceholderText('Enter URL or search');
 
-            fireEvent.changeText(input, 'https://example.com');
+            await fireEvent.changeText(input, 'https://example.com');
             expect(input.props.value).toBe('https://example.com');
         });
 
-        it('loads URL on submit', () => {
-            const { getByPlaceholderText } = render(<App />);
+        it('loads URL on submit', async () => {
+            const { getByPlaceholderText } = await render(<App />);
             const input = getByPlaceholderText('Enter URL or search');
 
-            fireEvent.changeText(input, 'https://google.com');
-            fireEvent(input, 'submitEditing');
+            await fireEvent.changeText(input, 'https://google.com');
+            await fireEvent(input, 'submitEditing');
 
             // URL constructor adds trailing slash
             expect(mockGeckoViewRef.loadUrl).toHaveBeenCalledWith('https://google.com/');
         });
 
-        it('adds https:// prefix when missing', () => {
-            const { getByPlaceholderText } = render(<App />);
+        it('adds https:// prefix when missing', async () => {
+            const { getByPlaceholderText } = await render(<App />);
             const input = getByPlaceholderText('Enter URL or search');
 
-            fireEvent.changeText(input, 'example.com');
-            fireEvent(input, 'submitEditing');
+            await fireEvent.changeText(input, 'example.com');
+            await fireEvent(input, 'submitEditing');
 
             expect(mockGeckoViewRef.loadUrl).toHaveBeenCalledWith('https://example.com/');
         });
 
-        it('performs Google search for invalid URLs', () => {
-            const { getByPlaceholderText } = render(<App />);
+        it('performs Google search for invalid URLs', async () => {
+            const { getByPlaceholderText } = await render(<App />);
             const input = getByPlaceholderText('Enter URL or search');
 
-            fireEvent.changeText(input, 'how to make coffee');
-            fireEvent(input, 'submitEditing');
+            await fireEvent.changeText(input, 'how to make coffee');
+            await fireEvent(input, 'submitEditing');
 
             expect(mockGeckoViewRef.loadUrl).toHaveBeenCalledWith(
                 expect.stringContaining('google.com/search?q=how')
@@ -108,47 +108,47 @@ describe('App', () => {
     });
 
     describe('Location Change Events', () => {
-        it('updates URL bar on location change', () => {
-            const { getByTestId, getByPlaceholderText } = render(<App />);
+        it('updates URL bar on location change', async () => {
+            const { getByTestId, getByPlaceholderText } = await render(<App />);
             const geckoView = getByTestId('geckoview');
             const input = getByPlaceholderText('Enter URL or search');
 
             // Simulate location change event
-            fireEvent(geckoView, 'onGeckoLocationChange', {
+            await fireEvent(geckoView, 'onGeckoLocationChange', {
                 nativeEvent: { url: 'https://newsite.com/page' }
             });
 
             expect(input.props.value).toBe('https://newsite.com/page');
         });
 
-        it('ignores about:blank in URL updates', () => {
-            const { getByTestId, getByPlaceholderText } = render(<App />);
+        it('ignores about:blank in URL updates', async () => {
+            const { getByTestId, getByPlaceholderText } = await render(<App />);
             const geckoView = getByTestId('geckoview');
             const input = getByPlaceholderText('Enter URL or search');
 
             // First, set a real URL
-            fireEvent(geckoView, 'onGeckoLocationChange', {
+            await fireEvent(geckoView, 'onGeckoLocationChange', {
                 nativeEvent: { url: 'https://example.com' }
             });
             expect(input.props.value).toBe('https://example.com');
 
             // about:blank should be ignored
-            fireEvent(geckoView, 'onGeckoLocationChange', {
+            await fireEvent(geckoView, 'onGeckoLocationChange', {
                 nativeEvent: { url: 'about:blank' }
             });
             expect(input.props.value).toBe('https://example.com');
         });
 
-        it('ignores javascript: URLs in URL updates', () => {
-            const { getByTestId, getByPlaceholderText } = render(<App />);
+        it('ignores javascript: URLs in URL updates', async () => {
+            const { getByTestId, getByPlaceholderText } = await render(<App />);
             const geckoView = getByTestId('geckoview');
             const input = getByPlaceholderText('Enter URL or search');
 
-            fireEvent(geckoView, 'onGeckoLocationChange', {
+            await fireEvent(geckoView, 'onGeckoLocationChange', {
                 nativeEvent: { url: 'https://example.com' }
             });
 
-            fireEvent(geckoView, 'onGeckoLocationChange', {
+            await fireEvent(geckoView, 'onGeckoLocationChange', {
                 nativeEvent: { url: 'javascript:void(0)' }
             });
             expect(input.props.value).toBe('https://example.com');
@@ -156,73 +156,73 @@ describe('App', () => {
     });
 
     describe('Navigation Controls', () => {
-        it('calls goBack when back button pressed', () => {
-            const { getByText } = render(<App />);
+        it('calls goBack when back button pressed', async () => {
+            const { getByText } = await render(<App />);
 
-            fireEvent.press(getByText('◀'));
+            await fireEvent.press(getByText('◀'));
             expect(mockGeckoViewRef.goBack).toHaveBeenCalled();
         });
 
-        it('calls goForward when forward button pressed', () => {
-            const { getByText } = render(<App />);
+        it('calls goForward when forward button pressed', async () => {
+            const { getByText } = await render(<App />);
 
-            fireEvent.press(getByText('▶'));
+            await fireEvent.press(getByText('▶'));
             expect(mockGeckoViewRef.goForward).toHaveBeenCalled();
         });
 
-        it('calls reload when reload button pressed', () => {
-            const { getByText } = render(<App />);
+        it('calls reload when reload button pressed', async () => {
+            const { getByText } = await render(<App />);
 
-            fireEvent.press(getByText('↻'));
+            await fireEvent.press(getByText('↻'));
             expect(mockGeckoViewRef.reload).toHaveBeenCalled();
         });
     });
 
     describe('Progress Events', () => {
-        it('updates progress on onGeckoProgressChange', () => {
-            const { getByTestId } = render(<App />);
+        it('updates progress on onGeckoProgressChange', async () => {
+            const { getByTestId } = await render(<App />);
             const geckoView = getByTestId('geckoview');
 
-            fireEvent(geckoView, 'onGeckoPageStart', {
+            await fireEvent(geckoView, 'onGeckoPageStart', {
                 nativeEvent: { url: 'https://example.com' }
             });
 
-            fireEvent(geckoView, 'onGeckoProgressChange', {
+            await fireEvent(geckoView, 'onGeckoProgressChange', {
                 nativeEvent: { progress: 50 }
             });
         });
 
-        it('handles page stop event', () => {
-            const { getByTestId } = render(<App />);
+        it('handles page stop event', async () => {
+            const { getByTestId } = await render(<App />);
             const geckoView = getByTestId('geckoview');
 
-            fireEvent(geckoView, 'onGeckoPageStart', {
+            await fireEvent(geckoView, 'onGeckoPageStart', {
                 nativeEvent: { url: 'https://example.com' }
             });
 
-            fireEvent(geckoView, 'onGeckoPageStop', {
+            await fireEvent(geckoView, 'onGeckoPageStop', {
                 nativeEvent: { success: true }
             });
         });
     });
 
     describe('Security Indicator', () => {
-        it('shows secure indicator for HTTPS', () => {
-            const { getByTestId, getByText } = render(<App />);
+        it('shows secure indicator for HTTPS', async () => {
+            const { getByTestId, getByText } = await render(<App />);
             const geckoView = getByTestId('geckoview');
 
-            fireEvent(geckoView, 'onGeckoSecurityChange', {
+            await fireEvent(geckoView, 'onGeckoSecurityChange', {
                 nativeEvent: { isSecure: true, host: 'example.com' }
             });
 
             expect(getByText('🔒')).toBeTruthy();
         });
 
-        it('shows insecure indicator for HTTP', () => {
-            const { getByTestId, getByText } = render(<App />);
+        it('shows insecure indicator for HTTP', async () => {
+            const { getByTestId, getByText } = await render(<App />);
             const geckoView = getByTestId('geckoview');
 
-            fireEvent(geckoView, 'onGeckoSecurityChange', {
+            await fireEvent(geckoView, 'onGeckoSecurityChange', {
                 nativeEvent: { isSecure: false, host: 'example.com' }
             });
 
@@ -231,14 +231,14 @@ describe('App', () => {
     });
 
     describe('Theme Toggle', () => {
-        it('toggles theme when theme button pressed', () => {
-            const { getByText } = render(<App />);
+        it('toggles theme when theme button pressed', async () => {
+            const { getByText } = await render(<App />);
 
             // Initial state is light mode, so icon is moon (🌙) to switch to dark
             const themeButton = getByText('🌙');
             expect(themeButton).toBeTruthy();
 
-            fireEvent.press(themeButton);
+            await fireEvent.press(themeButton);
 
             // After toggle to dark mode, icon should be sun (☀️)
             expect(getByText('☀️')).toBeTruthy();
@@ -246,24 +246,24 @@ describe('App', () => {
     });
 
     describe('User Agent Switching', () => {
-        it('sets desktop user agent', () => {
-            const { getByText } = render(<App />);
+        it('sets desktop user agent', async () => {
+            const { getByText } = await render(<App />);
 
-            fireEvent.press(getByText('🖥️'));
+            await fireEvent.press(getByText('🖥️'));
 
             expect(mockGeckoViewRef.setUserAgent).toHaveBeenCalledWith(
                 expect.stringContaining('X11; Linux x86_64')
             );
         });
 
-        it('resets to mobile user agent', () => {
-            const { getByText } = render(<App />);
+        it('resets to mobile user agent', async () => {
+            const { getByText } = await render(<App />);
 
             // First switch to desktop
-            fireEvent.press(getByText('🖥️'));
+            await fireEvent.press(getByText('🖥️'));
 
             // Then switch back to mobile
-            fireEvent.press(getByText('📱'));
+            await fireEvent.press(getByText('📱'));
 
             expect(mockGeckoViewRef.setUserAgent).toHaveBeenLastCalledWith('');
         });

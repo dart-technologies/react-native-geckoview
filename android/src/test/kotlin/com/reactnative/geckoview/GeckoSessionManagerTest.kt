@@ -1,13 +1,18 @@
 package com.reactnative.geckoview
 
 import android.content.Context
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkAll
+import io.mockk.verify
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -15,6 +20,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.MediaSession
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
@@ -25,6 +31,7 @@ class GeckoSessionManagerTest {
     private lateinit var context: Context
     private lateinit var mockRuntime: GeckoRuntime
     private lateinit var mockSession: GeckoSession
+    private val registeredModules = mutableListOf<GeckoViewModule>()
 
     @Before
     fun setUp() {
@@ -40,6 +47,8 @@ class GeckoSessionManagerTest {
         mockkObject(GeckoRuntimeManager)
         every { GeckoRuntimeManager.getRuntime(any()) } returns mockRuntime
         
+        GeckoSessionManager.setPlaybackAllowed(true)
+
         // Initialize the manager
         GeckoSessionManager.init(context)
         
@@ -51,6 +60,10 @@ class GeckoSessionManagerTest {
     
     @After
     fun tearDown() {
+        // The module set is process-wide: don't leave this test's mocks in it.
+        registeredModules.forEach { GeckoSessionManager.unregisterModuleForTest(it) }
+        GeckoSessionManager.setPlaybackAllowed(true)
+        GeckoSessionManager.closeAllSessions()
         // Clean up all mocks
         unmockkAll()
     }
@@ -141,49 +154,555 @@ class GeckoSessionManagerTest {
         assertTrue(sessions.containsKey("test-2"))
     }
 
-    // TODO: Fix thread safety test - assertion count mismatch in mock environment
-    /*
+    /**
+     * Concurrency regression for Finding #12.
+     *
+     * Previously `sessions` was a plain `mutableMapOf<String, GeckoSession>()`
+     * and `init()` iterated without synchronization — a second thread
+     * mutating `sessions` mid-iteration would throw
+     * `ConcurrentModificationException`. `init()` no longer walks the pool at
+     * all (see `init never opens pooled sessions`); the stress test below
+     * keeps the race covered and must never surface a CME.
+     *
+     * We exercise the specific pattern that previously failed: one thread
+     * hammering `init()` (which used to iterate `sessions.forEach`) while another
+     * mutates the session map via `releaseSession`. `GeckoSession`
+     * instantiation is skipped because it would require running on Robolectric's
+     * main thread; instead we pre-populate with real sessions from the main
+     * thread, then race init() against releases from worker threads.
+     */
     @Test
-    fun `thread safety - concurrent session creation`() {
-        // Start fresh
-        val initialSize = GeckoSessionManager.getAllSessions().size
-        
-        val threads = List(10) { index ->
+    fun `init + releaseSession must not throw ConcurrentModificationException`() {
+        GeckoSessionManager.init(context)
+
+        // Pre-populate from the main thread (only place GeckoSession() is safe).
+        val keys = (0 until 200).map { "concurrent-$it" }
+        keys.forEach { GeckoSessionManager.getOrCreateSession(it) }
+
+        val errors = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+        val initHammerThreads = List(10) {
             Thread {
-                repeat(10) {
-                    GeckoSessionManager.getOrCreateSession("concurrent-$index")
-                }
+                try {
+                    repeat(100) { GeckoSessionManager.init(context) }
+                } catch (t: Throwable) { errors.add(t) }
             }
         }
-        
-        threads.forEach { it.start() }
-        threads.forEach { it.join() }
-        
-        // Should have created exactly 10 new sessions (concurrent-0 through concurrent-9)
-        val sessions = GeckoSessionManager.getAllSessions()
-        val concurrentSessions = sessions.keys.filter { it.startsWith("concurrent-") }
-        assertEquals("Should have created 10 unique concurrent sessions", 10, concurrentSessions.size)
-        
-        // Verify all expected keys exist
-        (0..9).forEach { index ->
-            assertTrue("Should contain concurrent-$index", sessions.containsKey("concurrent-$index"))
+        val releaseThreads = keys.chunked(20).map { chunk ->
+            Thread {
+                try {
+                    chunk.forEach { GeckoSessionManager.releaseSession(it) }
+                } catch (t: Throwable) { errors.add(t) }
+            }
         }
+
+        (initHammerThreads + releaseThreads).forEach { it.start() }
+        (initHammerThreads + releaseThreads).forEach { it.join() }
+
+        val cmeErrors = errors.filterIsInstance<java.util.ConcurrentModificationException>()
+        assertTrue(
+            "Concurrent init + releaseSession must not throw CME; got ${cmeErrors.size}: ${cmeErrors.firstOrNull()}",
+            cmeErrors.isEmpty(),
+        )
     }
-    */
+
+    /**
+     * Companion regression: the race where `init()` used to iterate while
+     * `getOrCreateSession` (on the main thread, since GeckoSession requires
+     * it) inserts a new key. We simulate the insertion side by poking the
+     * underlying ConcurrentHashMap through a separate thread that hammers
+     * `getAllSessions()`, without needing GeckoSession construction off the
+     * UI thread.
+     */
+    @Test
+    fun `init iteration is safe under concurrent readers`() {
+        GeckoSessionManager.init(context)
+        (0 until 100).forEach { GeckoSessionManager.getOrCreateSession("seed-$it") }
+
+        val errors = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+        val readers = List(10) {
+            Thread {
+                try {
+                    repeat(500) { GeckoSessionManager.getAllSessions() }
+                } catch (t: Throwable) { errors.add(t) }
+            }
+        }
+        val initter = Thread {
+            try {
+                repeat(200) { GeckoSessionManager.init(context) }
+            } catch (t: Throwable) { errors.add(t) }
+        }
+
+        (readers + initter).forEach { it.start() }
+        (readers + initter).forEach { it.join() }
+
+        assertTrue(
+            "init + getAllSessions concurrently must not throw; got ${errors.firstOrNull()}",
+            errors.none { it is java.util.ConcurrentModificationException },
+        )
+    }
+
+    // ========== UI-thread confinement (self-review M1) ==========
+
+    @Test
+    fun `getOrCreateSession refuses to build a session off the UI thread`() {
+        // Ref methods run on the native-modules thread. There GeckoSession.open
+        // (and GeckoRuntime.create) throw IllegalThreadStateException, which
+        // used to leave an unopened orphan in the pool.
+        var failure: Throwable? = null
+        val nativeModulesThread = Thread {
+            try {
+                GeckoSessionManager.getOrCreateSession("worker-key")
+            } catch (t: Throwable) {
+                failure = t
+            }
+        }
+        nativeModulesThread.start()
+        nativeModulesThread.join()
+
+        assertTrue("expected IllegalStateException, got $failure", failure is IllegalStateException)
+        assertFalse(GeckoSessionManager.getAllSessions().containsKey("worker-key"))
+        verify(exactly = 0) { GeckoRuntimeManager.getRuntime(any()) }
+    }
+
+    @Test
+    fun `getOpenSession only returns a session a view opened and never creates one`() {
+        assertNull(GeckoSessionManager.getOpenSession("never-bound"))
+        assertFalse(GeckoSessionManager.getAllSessions().containsKey("never-bound"))
+
+        val session = GeckoSessionManager.getOrCreateSession("bound")
+        assertSame(session, GeckoSessionManager.getOpenSession("bound"))
+
+        GeckoSessionManager.releaseSession("bound")
+        assertNull(GeckoSessionManager.getOpenSession("bound"))
+    }
+
+    @Test
+    fun `init never opens pooled sessions`() {
+        // Leave a session in the pool unopened (the runtime failed to start).
+        // init used to open every pooled session, which revived orphans with no
+        // view attached on the next createViewInstance or module init.
+        every { GeckoRuntimeManager.getRuntime(any()) } throws IllegalStateException("runtime unavailable")
+        try {
+            GeckoSessionManager.getOrCreateSession("orphan")
+        } catch (_: IllegalStateException) {
+        }
+        assertTrue(GeckoSessionManager.getAllSessions().containsKey("orphan"))
+        every { GeckoRuntimeManager.getRuntime(any()) } returns mockRuntime
+
+        GeckoSessionManager.init(context)
+
+        verify(exactly = 1) { GeckoRuntimeManager.getRuntime(any()) }
+        assertNull(GeckoSessionManager.getOpenSession("orphan"))
+    }
+
+    @Test
+    fun `a pooled session GeckoView closed itself reopens when a view binds its key`() {
+        // GeckoView closes a session itself when its content process dies; the
+        // pool kept handing that dead session out, so a remounted view stayed
+        // blank.
+        val session = GeckoSessionManager.getOrCreateSession("crashed")
+        session.close()
+
+        assertSame(session, GeckoSessionManager.getOrCreateSession("crashed"))
+        assertTrue(session.isOpen)
+        verify(exactly = 2) { GeckoRuntimeManager.getRuntime(any()) }
+    }
 
     @Test
     fun `session pooling - reuses sessions correctly`() {
         GeckoSessionManager.init(context)
-        
+
         // Create sessions
         val session1a = GeckoSessionManager.getOrCreateSession("pool-1")
         val session2a = GeckoSessionManager.getOrCreateSession("pool-2")
-        
+
         // Reuse sessions
         val session1b = GeckoSessionManager.getOrCreateSession("pool-1")
         val session2b = GeckoSessionManager.getOrCreateSession("pool-2")
-        
+
         assertSame("Should reuse pool-1", session1a, session1b)
         assertSame("Should reuse pool-2", session2a, session2b)
+    }
+
+    // ========== view registry (synchronized WeakHashMap) ==========
+
+    @Test
+    fun `registerView then getView returns the registered view`() {
+        val session: GeckoSession = mockk(relaxed = true)
+        val view: org.mozilla.geckoview.GeckoView = mockk(relaxed = true)
+
+        GeckoSessionManager.registerView(session, view)
+
+        assertSame(view, GeckoSessionManager.getView(session))
+    }
+
+    @Test
+    fun `getView returns null for an unregistered session`() {
+        val session: GeckoSession = mockk(relaxed = true)
+        assertEquals(null, GeckoSessionManager.getView(session))
+    }
+
+    @Test
+    fun `getAllViews returns a snapshot containing every registered view`() {
+        val sessionA: GeckoSession = mockk(relaxed = true)
+        val sessionB: GeckoSession = mockk(relaxed = true)
+        val viewA: org.mozilla.geckoview.GeckoView = mockk(relaxed = true)
+        val viewB: org.mozilla.geckoview.GeckoView = mockk(relaxed = true)
+
+        GeckoSessionManager.registerView(sessionA, viewA)
+        GeckoSessionManager.registerView(sessionB, viewB)
+
+        val all = GeckoSessionManager.getAllViews()
+        assertTrue("snapshot must contain viewA", all.contains(viewA))
+        assertTrue("snapshot must contain viewB", all.contains(viewB))
+    }
+
+    @Test
+    fun `getAllViews returns a detached copy safe to iterate`() {
+        val session: GeckoSession = mockk(relaxed = true)
+        val view: org.mozilla.geckoview.GeckoView = mockk(relaxed = true)
+        GeckoSessionManager.registerView(session, view)
+
+        val snapshot = GeckoSessionManager.getAllViews()
+        // Mutating the registry after the snapshot must not affect the returned
+        // list (it's a copy taken under the map monitor). We assert by relative
+        // membership rather than absolute size, since `views` is process-wide
+        // shared state and other tests may have registered entries.
+        val session2: GeckoSession = mockk(relaxed = true)
+        val laterView: org.mozilla.geckoview.GeckoView = mockk(relaxed = true)
+        GeckoSessionManager.registerView(session2, laterView)
+
+        assertTrue("snapshot taken before the later register must include view", snapshot.contains(view))
+        assertFalse("frozen snapshot must NOT see the later registration", snapshot.contains(laterView))
+        // Keep strong refs so the WeakHashMap doesn't evict mid-assert.
+        assertSame(view, GeckoSessionManager.getView(session))
+    }
+
+    @Test
+    fun `registerView + getAllViews must not throw under concurrent access`() {
+        // getAllViews snapshots under the synchronized monitor while
+        // registerView mutates from worker threads — must never surface a
+        // ConcurrentModificationException from the underlying WeakHashMap.
+        val sessions = (0 until 200).map { mockk<GeckoSession>(relaxed = true) }
+        val views = sessions.map { mockk<org.mozilla.geckoview.GeckoView>(relaxed = true) }
+        val errors = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+
+        val writers = sessions.indices.chunked(20).map { idxChunk ->
+            Thread {
+                try {
+                    idxChunk.forEach { GeckoSessionManager.registerView(sessions[it], views[it]) }
+                } catch (t: Throwable) { errors.add(t) }
+            }
+        }
+        val readers = List(8) {
+            Thread {
+                try {
+                    repeat(500) { GeckoSessionManager.getAllViews() }
+                } catch (t: Throwable) { errors.add(t) }
+            }
+        }
+
+        (writers + readers).forEach { it.start() }
+        (writers + readers).forEach { it.join() }
+
+        assertTrue(
+            "concurrent registerView + getAllViews must not throw; got ${errors.firstOrNull()}",
+            errors.none { it is java.util.ConcurrentModificationException },
+        )
+        // Keep strong refs alive so the WeakHashMap doesn't GC them mid-assert.
+        assertEquals(200, sessions.size)
+    }
+
+    // ========== getSessionKey reverse lookup ==========
+
+    @Test
+    fun `getSessionKey returns the key for a known session`() {
+        GeckoSessionManager.init(context)
+        val session = GeckoSessionManager.getOrCreateSession("reverse-lookup")
+
+        assertEquals("reverse-lookup", GeckoSessionManager.getSessionKey(session))
+    }
+
+    @Test
+    fun `getSessionKey returns null for an unknown session`() {
+        val stranger: GeckoSession = mockk(relaxed = true)
+        assertEquals(null, GeckoSessionManager.getSessionKey(stranger))
+    }
+    @Test
+    fun `restrictions close existing sessions before JavaScript can act`() {
+        GeckoSessionManager.getOrCreateSession("playing-browser")
+        assertTrue(GeckoSessionManager.getAllSessions().isNotEmpty())
+        GeckoSessionManager.setPlaybackAllowed(false)
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertFalse(GeckoSessionManager.isPlaybackAllowed())
+        assertTrue(GeckoSessionManager.getAllSessions().isEmpty())
+    }
+
+    @Test
+    fun `parking does not reopen sessions or resume browser media`() {
+        GeckoSessionManager.setPlaybackAllowed(false)
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        GeckoSessionManager.setPlaybackAllowed(true)
+        assertTrue(GeckoSessionManager.isPlaybackAllowed())
+        assertTrue(GeckoSessionManager.getAllSessions().isEmpty())
+    }
+
+    @Test
+    fun `dropping a view removes its Activity association but preserves a pooled session`() {
+        val session = GeckoSessionManager.getOrCreateSession("pooled")
+        val view = mockk<org.mozilla.geckoview.GeckoView>(relaxed = true)
+        GeckoSessionManager.registerView(session, view)
+        GeckoSessionManager.unregisterView(view)
+        assertEquals(null, GeckoSessionManager.getView(session))
+        assertTrue(GeckoSessionManager.getAllViews().isEmpty())
+        assertSame(session, GeckoSessionManager.getAllSessions()["pooled"])
+    }
+
+    @Test
+    fun `releasing a session removes its view association immediately`() {
+        val session = GeckoSessionManager.getOrCreateSession("released")
+        val view = mockk<org.mozilla.geckoview.GeckoView>(relaxed = true)
+        GeckoSessionManager.registerView(session, view)
+        GeckoSessionManager.releaseSession("released")
+        assertEquals(null, GeckoSessionManager.getView(session))
+        assertTrue(GeckoSessionManager.getAllViews().isEmpty())
+    }
+
+    @Test
+    fun `closing sessions mid-playback releases the audio focus their delegates hold`() {
+        // closeSession (dart-tv's stop path) and a UX restriction both close a
+        // session whose page may still be playing; no onPause/onStop follows.
+        val released = GeckoSessionManager.getOrCreateSession("released-while-playing")
+        val releasedDelegate = mockk<MediaDelegate>(relaxed = true)
+        released.mediaSessionDelegate = releasedDelegate
+        val restricted = GeckoSessionManager.getOrCreateSession("restricted-while-playing")
+        val restrictedDelegate = mockk<MediaDelegate>(relaxed = true)
+        restricted.mediaSessionDelegate = restrictedDelegate
+
+        GeckoSessionManager.releaseSession("released-while-playing")
+        verify(exactly = 1) { releasedDelegate.release() }
+
+        GeckoSessionManager.closeAllSessions()
+        verify(exactly = 1) { restrictedDelegate.release() }
+    }
+
+    @Test
+    fun `a play GeckoView delivers after a close takes no focus that nothing would give back`() {
+        // Opus final gate, LOW: GeckoView posts media events to the UI thread,
+        // and a closed session keeps its delegates, so a play sent just before
+        // closeSession ran after it and requested focus again. The pool had let
+        // the session go, so nothing gave that focus up.
+        TestHelpers.mockArguments()
+        try {
+            val audioManager: AudioManager = mockk(relaxed = true)
+            every { context.getSystemService(Context.AUDIO_SERVICE) } returns audioManager
+            val session = GeckoSessionManager.getOrCreateSession("late")
+            val delegate = MediaDelegate(context, mockk(relaxed = true), true, 1)
+            session.mediaSessionDelegate = delegate
+            val media: MediaSession = mockk(relaxed = true)
+            delegate.onPlay(session, media)
+            // The view is dropped mid-playback, then the host closes the session.
+            delegate.detachFromView()
+            GeckoSessionManager.releaseSession("late")
+            assertFalse(session.isOpen)
+            assertSame(delegate, session.mediaSessionDelegate)
+
+            delegate.onPlay(session, media)
+
+            verify(exactly = 1) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
+            verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    /** A mock module registered for close reports, unregistered in tearDown. */
+    private fun registeredModule(): GeckoViewModule =
+        mockk<GeckoViewModule>(relaxed = true).also {
+            GeckoSessionManager.registerModule(it)
+            registeredModules += it
+        }
+
+    @Test
+    fun `every close path reports the sessions it closes to registered modules`() {
+        // Codex final review F2: shutdown and the UX restriction close sessions
+        // here, not through closeSession, so the module's snapshot cleanup
+        // never ran for them.
+        val module = registeredModule()
+        GeckoSessionManager.getOrCreateSession("closed-alone")
+        GeckoSessionManager.getOrCreateSession("closed-together-1")
+        GeckoSessionManager.getOrCreateSession("closed-together-2")
+
+        GeckoSessionManager.releaseSession("closed-alone")
+        verify(exactly = 1) { module.onSessionClosing("closed-alone") }
+
+        GeckoSessionManager.closeAllSessions()
+        verify(exactly = 1) { module.onSessionClosing("closed-together-1") }
+        verify(exactly = 1) { module.onSessionClosing("closed-together-2") }
+        verify(exactly = 1) { module.onSessionClosing("closed-alone") }
+    }
+
+    @Test
+    fun `modules hear of a session closing while it is still open`() {
+        // A save that registers its file between the close and the report
+        // would resolve for a closed session.
+        val module = registeredModule()
+        val openWhenReported = mutableListOf<Boolean>()
+        every { module.onSessionClosing(any()) } answers {
+            openWhenReported += GeckoSessionManager.getOpenSession(firstArg()) != null
+        }
+        GeckoSessionManager.getOrCreateSession("closed-alone")
+        GeckoSessionManager.getOrCreateSession("closed-together")
+
+        GeckoSessionManager.releaseSession("closed-alone")
+        GeckoSessionManager.closeAllSessions()
+
+        assertEquals(listOf(true, true), openWhenReported)
+    }
+
+    @Test
+    fun `a module that fails to clean up doesn't keep the others from it, or the sessions from closing`() {
+        // An Error too: on the restriction path it would end the UI thread.
+        val failing = registeredModule()
+        every { failing.onSessionClosing(any()) } throws Error("cleanup failed")
+        val module = registeredModule()
+        GeckoSessionManager.getOrCreateSession("closed")
+
+        GeckoSessionManager.closeAllSessions()
+
+        verify(exactly = 1) { module.onSessionClosing("closed") }
+        assertTrue(GeckoSessionManager.getAllSessions().isEmpty())
+    }
+
+    @Test
+    fun `a restriction removes all view associations without relying on GC or JS`() {
+        val session = GeckoSessionManager.getOrCreateSession("restricted")
+        val view = mockk<org.mozilla.geckoview.GeckoView>(relaxed = true)
+        GeckoSessionManager.registerView(session, view)
+        GeckoSessionManager.setPlaybackAllowed(false)
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertTrue(GeckoSessionManager.getAllViews().isEmpty())
+    }
+
+    // ========== sessions keyed by the JS wrapper ==========
+
+    /**
+     * A view the view manager binds to [key], tracking its session as a real
+     * GeckoView does; [generated] is the closeSessionOnDrop the wrapper
+     * passes, or null when the prop never reaches the view.
+     */
+    private fun mountView(manager: GeckoViewManagerImpl, key: String, generated: Boolean?) =
+        mockk<org.mozilla.geckoview.GeckoView>(relaxed = true).also { view ->
+            var bound: GeckoSession? = null
+            every { view.session } answers { bound }
+            every { view.setSession(any()) } answers { bound = firstArg() }
+            every { view.releaseSession() } answers { bound.also { bound = null } }
+            if (generated != null) manager.setCloseSessionOnDrop(view, generated)
+            manager.setSessionKey(view, key)
+        }
+
+    @Test
+    fun `a dropped view's session closes when the JS wrapper generated its key, and a host's stays pooled`() {
+        // No view can bind a generated key again: its session stayed pooled and
+        // open, with its content process, for the life of the process.
+        val module = registeredModule()
+        val manager = GeckoViewManagerImpl()
+        val generatedView = mountView(manager, "session-generated-1", generated = true)
+        val hostView = mountView(manager, "host-key", generated = false)
+        val generated = GeckoSessionManager.getOpenSession("session-generated-1")!!
+        val host = GeckoSessionManager.getOpenSession("host-key")!!
+
+        manager.onDropViewInstance(generatedView)
+        manager.onDropViewInstance(hostView)
+
+        assertFalse(generated.isOpen)
+        assertFalse(GeckoSessionManager.getAllSessions().containsKey("session-generated-1"))
+        verify(exactly = 1) { module.onSessionClosing("session-generated-1") }
+        // A remount with the host's key gets its open session back.
+        assertTrue(host.isOpen)
+        assertSame(host, GeckoSessionManager.getOrCreateSession("host-key"))
+        verify(exactly = 0) { module.onSessionClosing("host-key") }
+
+        // The host's own closeSession landing afterwards only reports the key
+        // closed again, which drops no snapshot: none can be saved for it now.
+        GeckoSessionManager.releaseSession("session-generated-1")
+        verify(exactly = 2) { module.onSessionClosing("session-generated-1") }
+        assertTrue(host.isOpen)
+    }
+
+    @Test
+    fun `a dropped view that never got closeSessionOnDrop leaves its session pooled`() {
+        // Only an explicit true closes. With props diffing
+        // (enablePropsUpdateReconciliationAndroid), Fabric leaves out a prop
+        // still at its default, so a false never arrives; nor does anything
+        // from a host that uses the native component without the wrapper.
+        val module = registeredModule()
+        val manager = GeckoViewManagerImpl()
+        val view = mountView(manager, "never-told", generated = null)
+        val session = GeckoSessionManager.getOpenSession("never-told")!!
+
+        manager.onDropViewInstance(view)
+
+        assertTrue(session.isOpen)
+        assertSame(session, GeckoSessionManager.getOpenSession("never-told"))
+        verify(exactly = 0) { module.onSessionClosing(any()) }
+    }
+
+    private fun assertDropAfterCloseReportsNoSecondClose(close: () -> Unit) {
+        val module = registeredModule()
+        val manager = GeckoViewManagerImpl()
+        val view = mountView(manager, "session-generated-1", generated = true)
+
+        close()
+        manager.onDropViewInstance(view)
+
+        verify(exactly = 1) { module.onSessionClosing("session-generated-1") }
+        assertTrue(GeckoSessionManager.getAllSessions().isEmpty())
+    }
+
+    @Test
+    fun `dropping a view whose session the host closed first doesn't close it again`() {
+        // DART TV calls closeSession() as the view unmounts, and the call can
+        // reach the UI thread before React Native drops the view.
+        assertDropAfterCloseReportsNoSecondClose { GeckoSessionManager.releaseSession("session-generated-1") }
+    }
+
+    @Test
+    fun `dropping a view after the playback gate closed every session doesn't close it again`() {
+        assertDropAfterCloseReportsNoSecondClose {
+            GeckoSessionManager.setPlaybackAllowed(false)
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        }
+    }
+
+    @Test
+    fun `dropping a view whose session GeckoView closed after a crash takes it out of the pool once`() {
+        val module = registeredModule()
+        val manager = GeckoViewManagerImpl()
+        val view = mountView(manager, "session-generated-1", generated = true)
+        // GeckoView closes a session itself when its content process dies.
+        GeckoSessionManager.getOpenSession("session-generated-1")!!.close()
+
+        manager.onDropViewInstance(view)
+
+        assertFalse(GeckoSessionManager.getAllSessions().containsKey("session-generated-1"))
+        verify(exactly = 1) { module.onSessionClosing("session-generated-1") }
+    }
+
+    @Test
+    fun `a drop between the playback gate closing and the close it posts reports each key once`() {
+        val module = registeredModule()
+        val manager = GeckoViewManagerImpl()
+        val generatedView = mountView(manager, "session-generated-1", generated = true)
+        mountView(manager, "host-key", generated = false)
+
+        // The restriction closes every session from a post to the UI thread.
+        GeckoSessionManager.setPlaybackAllowed(false)
+        manager.onDropViewInstance(generatedView)
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        verify(exactly = 1) { module.onSessionClosing("session-generated-1") }
+        verify(exactly = 1) { module.onSessionClosing("host-key") }
+        assertTrue(GeckoSessionManager.getAllSessions().isEmpty())
     }
 }

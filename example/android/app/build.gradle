@@ -19,7 +19,8 @@ react {
 
 android {
     namespace "com.reactnative.geckoview.example"
-    compileSdkVersion rootProject.ext.compileSdkVersion
+    def engine = new groovy.json.JsonSlurper().parse(rootProject.file("../../android/versions.json"))
+    compileSdkVersion "android-${engine.compileSdk}.${engine.compileSdkMinor}"
 
     defaultConfig {
         applicationId "com.reactnative.geckoview.example"
@@ -46,7 +47,7 @@ android {
         release {
             signingConfig signingConfigs.debug
             minifyEnabled false
-            proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
     }
 }

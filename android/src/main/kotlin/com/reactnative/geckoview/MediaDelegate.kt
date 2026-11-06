@@ -5,7 +5,8 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
-import android.util.Log
+import android.os.Handler
+import android.os.Looper
 import com.facebook.react.bridge.Arguments
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.MediaSession
@@ -19,37 +20,62 @@ import org.mozilla.geckoview.MediaSession
  */
 class MediaDelegate(
     context: Context,
-    private val module: GeckoViewModule,
-    private val handleAudioFocus: Boolean = false,
-    private val viewId: Int = 0
+    module: GeckoViewModule,
+    handleAudioFocus: Boolean = false,
+    viewId: Int = 0
 ) : MediaSession.Delegate {
 
-    private val audioManager: AudioManager = 
-        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    
+    // The application's AudioManager, not one scoped to the view's Activity:
+    // this delegate stays with its pooled session after the view is dropped
+    // (see [detachFromView]).
+    private val audioManager: AudioManager =
+        context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+    // The view this delegate reports to ([attachToView]); the module is null
+    // while no view shows the session.
+    private var module: GeckoViewModule? = module
+    private var viewId: Int = viewId
+    private var handleAudioFocus: Boolean = handleAudioFocus
+
     private var activeMediaSession: MediaSession? = null
+    // Muted for a duck, until focus comes back or the request is given up.
+    // Kept apart from activeMediaSession, which a pause clears first.
+    private var duckedMediaSession: MediaSession? = null
+    // Between onActivated and onDeactivated, so a view that binds the session
+    // later can be told ([attachToView]).
+    private var activated = false
     private var focusRequest: AudioFocusRequest? = null
 
-    private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+    // Internal so tests can deliver focus changes.
+    internal val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
             AudioManager.AUDIOFOCUS_GAIN -> {
-                Log.d(TAG, "Audio focus gained")
-                activeMediaSession?.muteAudio(false)
+                GeckoLog.d(TAG, "Audio focus gained")
+                endDuck()
             }
             AudioManager.AUDIOFOCUS_LOSS,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                Log.d(TAG, "Audio focus lost")
+                GeckoLog.d(TAG, "Audio focus lost")
                 activeMediaSession?.pause()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                Log.d(TAG, "Audio focus ducked")
-                activeMediaSession?.muteAudio(true)
+                GeckoLog.d(TAG, "Audio focus ducked")
+                activeMediaSession?.let {
+                    it.muteAudio(true)
+                    duckedMediaSession = it
+                }
             }
         }
     }
 
     override fun onPlay(session: GeckoSession, mediaSession: MediaSession) {
-        Log.d(TAG, "onPlay called for MediaSession")
+        GeckoLog.d(TAG, "onPlay called for MediaSession")
+        // GeckoView posts media events to the UI thread, and a closed session
+        // keeps its delegates, so a play sent just before the library closes
+        // the session (closeSession, shutdown, the playback gate) can run
+        // after the close. Focus taken then would never be given back:
+        // [release] has already run, and no pause or stop follows.
+        if (!session.isOpen) return
         activeMediaSession = mediaSession
         
         if (handleAudioFocus) {
@@ -59,11 +85,11 @@ class MediaDelegate(
         val params = Arguments.createMap().apply {
             putString("action", "play")
         }
-        module.sendViewEvent(viewId, "onMediaSessionAction", params)
+        module?.sendViewEvent(viewId, "onMediaSessionAction", params)
     }
 
     override fun onPause(session: GeckoSession, mediaSession: MediaSession) {
-        Log.d(TAG, "onPause called for MediaSession")
+        GeckoLog.d(TAG, "onPause called for MediaSession")
         activeMediaSession = null
         
         if (handleAudioFocus) {
@@ -73,11 +99,11 @@ class MediaDelegate(
         val params = Arguments.createMap().apply {
             putString("action", "pause")
         }
-        module.sendViewEvent(viewId, "onMediaSessionAction", params)
+        module?.sendViewEvent(viewId, "onMediaSessionAction", params)
     }
 
     override fun onStop(session: GeckoSession, mediaSession: MediaSession) {
-        Log.d(TAG, "onStop called for MediaSession")
+        GeckoLog.d(TAG, "onStop called for MediaSession")
         activeMediaSession = null
         
         if (handleAudioFocus) {
@@ -87,22 +113,27 @@ class MediaDelegate(
         val params = Arguments.createMap().apply {
             putString("action", "stop")
         }
-        module.sendViewEvent(viewId, "onMediaSessionAction", params)
+        module?.sendViewEvent(viewId, "onMediaSessionAction", params)
     }
 
     override fun onActivated(session: GeckoSession, mediaSession: MediaSession) {
-        Log.d(TAG, "onActivated called for MediaSession")
+        GeckoLog.d(TAG, "onActivated called for MediaSession")
+        // Likewise for a late activation: the view still showing the closed
+        // session would be told its media is active.
+        if (!session.isOpen) return
+        activated = true
         // Don't request focus on activation, wait for actual play event
         val params = Arguments.createMap().apply {
             putString("action", "activated")
         }
-        module.sendViewEvent(viewId, "onMediaSessionAction", params)
+        module?.sendViewEvent(viewId, "onMediaSessionAction", params)
     }
 
     override fun onDeactivated(session: GeckoSession, mediaSession: MediaSession) {
-        Log.d(TAG, "onDeactivated called for MediaSession")
+        GeckoLog.d(TAG, "onDeactivated called for MediaSession")
         activeMediaSession = null
-        
+        activated = false
+
         if (handleAudioFocus) {
             abandonAudioFocus()
         }
@@ -110,7 +141,7 @@ class MediaDelegate(
         val params = Arguments.createMap().apply {
             putString("action", "deactivated")
         }
-        module.sendViewEvent(viewId, "onMediaSessionAction", params)
+        module?.sendViewEvent(viewId, "onMediaSessionAction", params)
     }
 
     override fun onMetadata(
@@ -118,20 +149,83 @@ class MediaDelegate(
         mediaSession: MediaSession,
         meta: MediaSession.Metadata
     ) {
-        Log.d(TAG, "onMetadata called")
+        GeckoLog.d(TAG, "onMetadata called")
         val params = Arguments.createMap().apply {
             putString("action", "metadata")
             putString("title", meta.title)
             putString("artist", meta.artist)
             putString("album", meta.album)
         }
-        module.sendViewEvent(viewId, "onMediaSessionAction", params)
+        module?.sendViewEvent(viewId, "onMediaSessionAction", params)
+    }
+
+    /**
+     * Give up audio focus and forget the active media session. Called when the
+     * session that owns this delegate closes mid-playback, including when
+     * GeckoView closed it itself: no onPause/onStop is guaranteed to arrive
+     * afterwards, so focus taken in [onPlay] would otherwise be held until the
+     * process dies. A play or activation delivered after the close is ignored.
+     */
+    fun release() {
+        activeMediaSession = null
+        activated = false
+        if (handleAudioFocus) {
+            abandonAudioFocus()
+        }
+        focusRequest = null
+    }
+
+    /**
+     * The view was dropped, but its pooled session stays open. Keep handling
+     * the session's audio focus (hold it while the page plays, pause the page
+     * on a loss) until the session closes ([release]) or another view binds it
+     * ([attachToView]); stop sending events.
+     */
+    fun detachFromView() {
+        module = null
+    }
+
+    /**
+     * Report to the view that now binds this delegate's session, and tell it
+     * what it missed: that the page's media session is active, and that it is
+     * playing. Focus held for media still playing stays held, with no new
+     * request that would interrupt other audio; [setHandleAudioFocus] applies
+     * the view's own setting.
+     */
+    fun attachToView(module: GeckoViewModule, viewId: Int) {
+        this.module = module
+        this.viewId = viewId
+        if (activated) sendAction("activated")
+        if (activeMediaSession != null) sendAction("play")
+    }
+
+    /**
+     * Apply the bound view's `handleAudioFocus`: take focus for media already
+     * playing, or give it up. Nothing changes when the setting is the same.
+     */
+    fun setHandleAudioFocus(enabled: Boolean) {
+        if (enabled == handleAudioFocus) return
+        handleAudioFocus = enabled
+        if (!enabled) {
+            abandonAudioFocus()
+            focusRequest = null
+        } else if (activeMediaSession != null) {
+            requestAudioFocus()
+        }
+    }
+
+    private fun sendAction(action: String) {
+        val params = Arguments.createMap().apply {
+            putString("action", action)
+        }
+        module?.sendViewEvent(viewId, "onMediaSessionAction", params)
     }
 
     private fun requestAudioFocus() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             // Abandon any existing request to prevent leaks
             focusRequest?.let {
+                endDuck()
                 audioManager.abandonAudioFocusRequest(it)
             }
 
@@ -142,16 +236,19 @@ class MediaDelegate(
             
             val newFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(playbackAttributes)
-                .setOnAudioFocusChangeListener(audioFocusChangeListener)
+                // On the UI thread, where GeckoView calls this delegate. Without
+                // a Handler, changes arrive on the looper of whichever thread
+                // first created the application's AudioManager.
+                .setOnAudioFocusChangeListener(audioFocusChangeListener, Handler(Looper.getMainLooper()))
                 .build()
             
             focusRequest = newFocusRequest
 
             val result = audioManager.requestAudioFocus(newFocusRequest)
             if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-                Log.d(TAG, "Audio focus granted (API 26+)")
+                GeckoLog.d(TAG, "Audio focus granted")
             } else {
-                Log.w(TAG, "Audio focus request denied (API 26+)")
+                GeckoLog.w(TAG, "Audio focus request denied")
             }
         } else {
             @Suppress("DEPRECATION")
@@ -161,27 +258,45 @@ class MediaDelegate(
                 AudioManager.AUDIOFOCUS_GAIN
             )
             if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-                Log.d(TAG, "Audio focus granted (legacy)")
+                GeckoLog.d(TAG, "Audio focus granted")
             } else {
-                Log.w(TAG, "Audio focus request denied (legacy)")
+                GeckoLog.w(TAG, "Audio focus request denied")
             }
         }
     }
 
+    /**
+     * Unmute media muted for a duck. A request that is given up never gets
+     * the AUDIOFOCUS_GAIN that would, so the page would stay silent.
+     */
+    private fun endDuck() {
+        duckedMediaSession?.muteAudio(false)
+        duckedMediaSession = null
+    }
+
     private fun abandonAudioFocus() {
+        endDuck()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             focusRequest?.let {
                 audioManager.abandonAudioFocusRequest(it)
-                Log.d(TAG, "Audio focus abandoned (API 26+)")
+                GeckoLog.d(TAG, "Audio focus abandoned")
             }
         } else {
             @Suppress("DEPRECATION")
             audioManager.abandonAudioFocus(audioFocusChangeListener)
-            Log.d(TAG, "Audio focus abandoned (legacy)")
+            GeckoLog.d(TAG, "Audio focus abandoned")
         }
     }
 
     companion object {
         private const val TAG = "MediaDelegate"
+
+        /**
+         * GeckoView closed [session] itself because its content process died;
+         * no pause or stop follows, so give up the focus held for its media.
+         */
+        fun releaseFor(session: GeckoSession) {
+            (session.mediaSessionDelegate as? MediaDelegate)?.release()
+        }
     }
 }

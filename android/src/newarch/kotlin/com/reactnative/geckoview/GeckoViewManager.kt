@@ -1,6 +1,5 @@
 package com.reactnative.geckoview
 
-import com.facebook.react.common.MapBuilder
 import com.facebook.react.module.annotations.ReactModule
 import com.facebook.react.uimanager.SimpleViewManager
 import com.facebook.react.uimanager.ThemedReactContext
@@ -26,9 +25,23 @@ class GeckoViewManager :
     override fun createViewInstance(context: ThemedReactContext): GeckoView =
         impl.createViewInstance(context)
 
+    override fun onDropViewInstance(view: GeckoView) {
+        impl.onDropViewInstance(view)
+        super.onDropViewInstance(view)
+    }
+
+    override fun onAfterUpdateTransaction(view: GeckoView) {
+        super.onAfterUpdateTransaction(view)
+        impl.onAfterUpdateTransaction(view)
+    }
+
     @ReactProp(name = "sessionKey")
     override fun setSessionKey(view: GeckoView, sessionKey: String?) =
         impl.setSessionKey(view, sessionKey)
+
+    @ReactProp(name = "closeSessionOnDrop")
+    override fun setCloseSessionOnDrop(view: GeckoView, value: Boolean) =
+        impl.setCloseSessionOnDrop(view, value)
 
     @ReactProp(name = "source")
     override fun setSource(view: GeckoView, source: ReadableMap?) =
@@ -46,26 +59,29 @@ class GeckoViewManager :
     override fun setCookieBannerMode(view: GeckoView, value: String?) =
         impl.setCookieBannerMode(view, value)
 
-    override fun getExportedCustomDirectEventTypeConstants(): Map<String, Any>? {
-        return MapBuilder.builder<String, Any>()
-            .put("topGeckoPageStart", MapBuilder.of("registrationName", "onGeckoPageStart"))
-            .put("topGeckoPageStop", MapBuilder.of("registrationName", "onGeckoPageStop"))
-            .put("topGeckoProgressChange", MapBuilder.of("registrationName", "onGeckoProgressChange"))
-            .put("topGeckoSecurityChange", MapBuilder.of("registrationName", "onGeckoSecurityChange"))
-            .put("topGeckoLocationChange", MapBuilder.of("registrationName", "onGeckoLocationChange"))
-            .put("topPageError", MapBuilder.of("registrationName", "onPageError"))
-            .put("topMediaSessionAction", MapBuilder.of("registrationName", "onMediaSessionAction"))
-            .put("topGeckoAlert", MapBuilder.of("registrationName", "onGeckoAlert"))
-            .put("topGeckoConfirm", MapBuilder.of("registrationName", "onGeckoConfirm"))
-            .put("topGeckoPrompt", MapBuilder.of("registrationName", "onGeckoPrompt"))
-            .put("topGeckoPopup", MapBuilder.of("registrationName", "onGeckoPopup"))
-            .put("topGeckoBeforeUnload", MapBuilder.of("registrationName", "onGeckoBeforeUnload"))
-            .put("topGeckoAuth", MapBuilder.of("registrationName", "onGeckoAuth"))
-            .put("topPermissionRequest", MapBuilder.of("registrationName", "onPermissionRequest"))
-            .put("topWebExtensionMessage", MapBuilder.of("registrationName", "onWebExtensionMessage"))
-            .put("topTitleChange", MapBuilder.of("registrationName", "onTitleChange"))
-            .put("topContextMenu", MapBuilder.of("registrationName", "onContextMenu"))
-            .put("topFocusExit", MapBuilder.of("registrationName", "onFocusExit"))
-            .build()
-    }
+    @ReactProp(name = "desktopMode", defaultBoolean = true)
+    override fun setDesktopMode(view: GeckoView, value: Boolean) =
+        impl.setDesktopMode(view, value)
+
+    override fun getExportedCustomDirectEventTypeConstants(): Map<String, Any> = mapOf(
+        "topGeckoPageStart" to mapOf("registrationName" to "onGeckoPageStart"),
+        "topGeckoPageStop" to mapOf("registrationName" to "onGeckoPageStop"),
+        "topGeckoProgressChange" to mapOf("registrationName" to "onGeckoProgressChange"),
+        "topGeckoSecurityChange" to mapOf("registrationName" to "onGeckoSecurityChange"),
+        "topGeckoLocationChange" to mapOf("registrationName" to "onGeckoLocationChange"),
+        "topPageError" to mapOf("registrationName" to "onPageError"),
+        "topMediaSessionAction" to mapOf("registrationName" to "onMediaSessionAction"),
+        "topGeckoAlert" to mapOf("registrationName" to "onGeckoAlert"),
+        "topGeckoConfirm" to mapOf("registrationName" to "onGeckoConfirm"),
+        "topGeckoPrompt" to mapOf("registrationName" to "onGeckoPrompt"),
+        "topGeckoPopup" to mapOf("registrationName" to "onGeckoPopup"),
+        "topGeckoBeforeUnload" to mapOf("registrationName" to "onGeckoBeforeUnload"),
+        "topGeckoAuth" to mapOf("registrationName" to "onGeckoAuth"),
+        "topPermissionRequest" to mapOf("registrationName" to "onPermissionRequest"),
+        "topWebExtensionMessage" to mapOf("registrationName" to "onWebExtensionMessage"),
+        "topTitleChange" to mapOf("registrationName" to "onTitleChange"),
+        "topContextMenu" to mapOf("registrationName" to "onContextMenu"),
+        "topFocusExit" to mapOf("registrationName" to "onFocusExit"),
+        "topContentProcessGone" to mapOf("registrationName" to "onContentProcessGone"),
+    )
 }

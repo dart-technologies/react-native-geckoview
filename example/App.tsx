@@ -14,8 +14,6 @@ import {
     Pressable,
     Alert,
     Modal,
-    NativeSyntheticEvent,
-    TextInputSubmitEditingEventData,
     ViewStyle,
     TextStyle,
     StatusBar,
@@ -252,7 +250,10 @@ interface ProgressBarProps {
 }
 
 const ProgressBar: React.FC<ProgressBarProps> = ({ progress, theme, visible, testID }) => {
-    if (!visible && progress === 0) return null;
+    // Gate visibility on `loading` only. The old `&& progress === 0` guard left
+    // the bar rendered at 100% width after load (handlePageStop sets progress=1
+    // while clearing loading), so the green bar never disappeared.
+    if (!visible) return null;
 
     return (
         <View testID={testID} style={[styles.progressContainer, { backgroundColor: theme.colors.progressBackground }]}>
@@ -310,14 +311,7 @@ export default function App(): React.JSX.Element {
     // Error state
     const [error, setError] = useState<string | null>(null);
 
-    // Initial load effect
-    useEffect(() => {
-        // Load the default homepage after a short delay to ensure GeckoView is ready
-        const timer = setTimeout(() => {
-            geckoRef.current?.loadUrl('https://dart.art');
-        }, 500);
-        return () => clearTimeout(timer);
-    }, []);
+    // (Initial load handled by the single useEffect below that calls loadUrlOrSearch(inputUrl).)
 
     // ========================================================================
     // Theme Hook Application
@@ -528,12 +522,12 @@ export default function App(): React.JSX.Element {
 
     const submitAuth = useCallback(() => {
         if (authData) {
-            geckoRef.current?.resolvePrompt(authData.promptId, true, undefined, username);
+            geckoRef.current?.resolvePrompt(authData.promptId, true, undefined, username, password);
             setAuthData(null);
             setUsername('');
             setPassword('');
         }
-    }, [authData, username]);
+    }, [authData, username, password]);
 
     // ========================================================================
     // Initial Load
@@ -555,7 +549,6 @@ export default function App(): React.JSX.Element {
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
             <StatusBar
                 barStyle={theme.mode === 'dark' ? 'light-content' : 'dark-content'}
-                backgroundColor={theme.colors.surface}
             />
 
             {/* Browser App Bar */}

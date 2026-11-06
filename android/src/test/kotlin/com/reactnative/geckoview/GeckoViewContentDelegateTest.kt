@@ -1,45 +1,40 @@
 package com.reactnative.geckoview
 
-import org.junit.Before
+import com.facebook.react.bridge.WritableMap
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.slot
+import io.mockk.verify
+import io.mockk.verifyOrder
 import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mockito.Mock
-import org.mockito.MockitoAnnotations
-import org.mockito.kotlin.any
-import org.mockito.kotlin.argThat
-import org.mockito.kotlin.eq
-import org.mockito.kotlin.never
-import org.mockito.kotlin.times
-import org.mockito.kotlin.verify
 import org.mozilla.geckoview.GeckoSession
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import io.mockk.every
-import io.mockk.mockk
 
 /**
- * Tests for GeckoViewContentDelegate
- * Verifies title change events and context menu events are correctly emitted
- * 
- * Coverage:
- * - Title change events (onTitleChange)
- * - Focus exit hack detection
- * - Context menu events (onContextMenu)
+ * Tests for [GeckoViewContentDelegate] — title changes, focus-exit hack,
+ * context-menu forwarding, content-process death.
+ *
+ * `GeckoSession.ContentDelegate.ContextElement` exposes `type`/`linkUri`/`srcUri`
+ * as public-final fields (not getters), so MockK cannot stub them directly. We
+ * set them via reflection on a relaxed mock — the same pattern used for
+ * `WebRequestError.code` and `WebExtension.id` (see [TestHelpers.setField]).
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 class GeckoViewContentDelegateTest {
 
-    @Mock private lateinit var module: GeckoViewModule
-    @Mock private lateinit var session: GeckoSession
-
+    private val module: GeckoViewModule = mockk(relaxed = true)
+    private val session: GeckoSession = mockk(relaxed = true)
     private lateinit var contentDelegate: GeckoViewContentDelegate
     private val testViewId = 789
 
     @Before
     fun setUp() {
-        MockitoAnnotations.openMocks(this)
         TestHelpers.mockArguments()
         contentDelegate = GeckoViewContentDelegate(module, testViewId)
     }
@@ -49,39 +44,30 @@ class GeckoViewContentDelegateTest {
         TestHelpers.unmockArguments()
     }
 
-    // ========== Title Change Events (Item 8) ==========
+    // Title Change Events
 
     @Test
     fun `onTitleChange emits onTitleChange event with title`() {
-        val title = "Example Page Title"
-        
-        contentDelegate.onTitleChange(session, title)
-        
-        verify(module).sendViewEvent(eq(testViewId), eq("onTitleChange"), any())
+        contentDelegate.onTitleChange(session, "Example Page Title")
+        verify { module.sendViewEvent(testViewId, "onTitleChange", any()) }
     }
 
     @Test
     fun `onTitleChange handles null title`() {
         contentDelegate.onTitleChange(session, null)
-        
-        // Should emit event with empty string
-        verify(module).sendViewEvent(eq(testViewId), eq("onTitleChange"), any())
+        verify { module.sendViewEvent(testViewId, "onTitleChange", any()) }
     }
 
     @Test
     fun `onTitleChange handles empty title`() {
         contentDelegate.onTitleChange(session, "")
-        
-        verify(module).sendViewEvent(eq(testViewId), eq("onTitleChange"), any())
+        verify { module.sendViewEvent(testViewId, "onTitleChange", any()) }
     }
 
     @Test
     fun `onTitleChange handles long title`() {
-        val longTitle = "A".repeat(1000)
-        
-        contentDelegate.onTitleChange(session, longTitle)
-        
-        verify(module).sendViewEvent(eq(testViewId), eq("onTitleChange"), any())
+        contentDelegate.onTitleChange(session, "A".repeat(1000))
+        verify { module.sendViewEvent(testViewId, "onTitleChange", any()) }
     }
 
     @Test
@@ -91,95 +77,67 @@ class GeckoViewContentDelegateTest {
             "Titre en français",
             "Título en español",
             "🎉 Emoji Title 🚀",
-            "العنوان بالعربية"
+            "العنوان بالعربية",
         )
-        
-        titles.forEach { title ->
-            contentDelegate.onTitleChange(session, title)
+        titles.forEach { contentDelegate.onTitleChange(session, it) }
+
+        verify(exactly = titles.size) {
+            module.sendViewEvent(testViewId, "onTitleChange", any())
         }
-        
-        verify(module, times(titles.size)).sendViewEvent(eq(testViewId), eq("onTitleChange"), any())
     }
 
     @Test
     fun `onTitleChange handles HTML entities in title`() {
-        val title = "Page &amp; Title &lt;test&gt;"
-        
-        contentDelegate.onTitleChange(session, title)
-        
-        verify(module).sendViewEvent(eq(testViewId), eq("onTitleChange"), any())
+        contentDelegate.onTitleChange(session, "Page &amp; Title &lt;test&gt;")
+        verify { module.sendViewEvent(testViewId, "onTitleChange", any()) }
     }
 
     @Test
     fun `onTitleChange handles special characters`() {
-        val title = "Title with \"quotes\" and 'apostrophes'"
-        
-        contentDelegate.onTitleChange(session, title)
-        
-        verify(module).sendViewEvent(eq(testViewId), eq("onTitleChange"), any())
+        contentDelegate.onTitleChange(session, "Title with \"quotes\" and 'apostrophes'")
+        verify { module.sendViewEvent(testViewId, "onTitleChange", any()) }
     }
 
     @Test
     fun `onTitleChange handles whitespace-only title`() {
-        val title = "   \t\n  "
-        
-        contentDelegate.onTitleChange(session, title)
-        
-        verify(module).sendViewEvent(eq(testViewId), eq("onTitleChange"), any())
+        contentDelegate.onTitleChange(session, "   \t\n  ")
+        verify { module.sendViewEvent(testViewId, "onTitleChange", any()) }
     }
 
-    // ========== Focus Exit Hack Detection ==========
+    // Focus Exit Hack Detection
 
     @Test
     fun `onTitleChange detects focus exit up`() {
-        val title = "__FOCUS_EXIT__:UP"
-        
-        contentDelegate.onTitleChange(session, title)
-        
-        // Should emit onFocusExit, not onTitleChange
-        verify(module).sendViewEvent(eq(testViewId), eq("onFocusExit"), any())
-        verify(module, never()).sendViewEvent(eq(testViewId), eq("onTitleChange"), any())
+        contentDelegate.onTitleChange(session, "__FOCUS_EXIT__:UP")
+        verify { module.sendViewEvent(testViewId, "onFocusExit", any()) }
+        verify(exactly = 0) { module.sendViewEvent(testViewId, "onTitleChange", any()) }
     }
 
     @Test
     fun `onTitleChange detects focus exit down`() {
-        val title = "__FOCUS_EXIT__:DOWN"
-        
-        contentDelegate.onTitleChange(session, title)
-        
-        verify(module).sendViewEvent(eq(testViewId), eq("onFocusExit"), any())
-        verify(module, never()).sendViewEvent(eq(testViewId), eq("onTitleChange"), any())
+        contentDelegate.onTitleChange(session, "__FOCUS_EXIT__:DOWN")
+        verify { module.sendViewEvent(testViewId, "onFocusExit", any()) }
+        verify(exactly = 0) { module.sendViewEvent(testViewId, "onTitleChange", any()) }
     }
 
     @Test
     fun `onTitleChange detects focus exit left`() {
-        val title = "__FOCUS_EXIT__:LEFT"
-        
-        contentDelegate.onTitleChange(session, title)
-        
-        verify(module).sendViewEvent(eq(testViewId), eq("onFocusExit"), any())
-        verify(module, never()).sendViewEvent(eq(testViewId), eq("onTitleChange"), any())
+        contentDelegate.onTitleChange(session, "__FOCUS_EXIT__:LEFT")
+        verify { module.sendViewEvent(testViewId, "onFocusExit", any()) }
+        verify(exactly = 0) { module.sendViewEvent(testViewId, "onTitleChange", any()) }
     }
 
     @Test
     fun `onTitleChange detects focus exit right`() {
-        val title = "__FOCUS_EXIT__:RIGHT"
-        
-        contentDelegate.onTitleChange(session, title)
-        
-        verify(module).sendViewEvent(eq(testViewId), eq("onFocusExit"), any())
-        verify(module, never()).sendViewEvent(eq(testViewId), eq("onTitleChange"), any())
+        contentDelegate.onTitleChange(session, "__FOCUS_EXIT__:RIGHT")
+        verify { module.sendViewEvent(testViewId, "onFocusExit", any()) }
+        verify(exactly = 0) { module.sendViewEvent(testViewId, "onTitleChange", any()) }
     }
 
     @Test
     fun `onTitleChange normalizes focus exit direction to lowercase`() {
-        // The implementation calls direction.lowercase()
-        val title = "__FOCUS_EXIT__:UP"
-        
-        contentDelegate.onTitleChange(session, title)
-        
-        // Verify event was sent (direction normalization is internal)
-        verify(module).sendViewEvent(eq(testViewId), eq("onFocusExit"), any())
+        contentDelegate.onTitleChange(session, "__FOCUS_EXIT__:UP")
+        verify { module.sendViewEvent(testViewId, "onFocusExit", any()) }
     }
 
     @Test
@@ -188,92 +146,201 @@ class GeckoViewContentDelegateTest {
             "_FOCUS_EXIT__:UP",
             "__FOCUS_EXIT_:UP",
             "FOCUS_EXIT:UP",
-            "__FOCUS_EXIT:UP"  // Missing second underscore after FOCUS
+            "__FOCUS_EXIT:UP",
         )
-        
-        titles.forEach { title ->
-            contentDelegate.onTitleChange(session, title)
+        titles.forEach { contentDelegate.onTitleChange(session, it) }
+
+        verify(exactly = titles.size) {
+            module.sendViewEvent(testViewId, "onTitleChange", any())
         }
-        
-        // All should be treated as regular titles
-        verify(module, times(titles.size)).sendViewEvent(eq(testViewId), eq("onTitleChange"), any())
-        verify(module, never()).sendViewEvent(eq(testViewId), eq("onFocusExit"), any())
+        verify(exactly = 0) { module.sendViewEvent(testViewId, "onFocusExit", any()) }
     }
 
     @Test
     fun `onTitleChange handles focus exit with lowercase direction`() {
-        val title = "__FOCUS_EXIT__:up"
-        
-        contentDelegate.onTitleChange(session, title)
-        
-        verify(module).sendViewEvent(eq(testViewId), eq("onFocusExit"), any())
+        contentDelegate.onTitleChange(session, "__FOCUS_EXIT__:up")
+        verify { module.sendViewEvent(testViewId, "onFocusExit", any()) }
     }
 
-    // ========== Context Menu Events ==========
-    /*
-     * NOTE: The following context menu tests are commented out because 
-     * GeckoSession.ContentDelegate.ContextElement is a final class that cannot be mocked
-     * by MockK in Robolectric's sandbox. Context menu functionality is tested via 
-     * integration tests on device.
-     *
-    @Test
-    fun `onContextMenu emits onContextMenu event with coordinates`() { ... }
-    @Test
-    fun `onContextMenu includes link URI for links`() { ... }
-    @Test
-    fun `onContextMenu identifies image type`() { ... }
-    @Test
-    fun `onContextMenu identifies video type`() { ... }
-    @Test
-    fun `onContextMenu identifies audio type`() { ... }
-    @Test
-    fun `onContextMenu handles image with link`() { ... }
-    @Test
-    fun `onContextMenu handles zero coordinates`() { ... }
-    @Test
-    fun `onContextMenu handles negative coordinates`() { ... }
-    @Test
-    fun `onContextMenu handles large coordinates`() { ... }
-    */
-
-    // ========== Integration Tests ==========
+    // Integration Tests
 
     @Test
     fun `multiple title changes emit correct events`() {
-        val titles = listOf(
-            "Page 1",
-            "Page 2",
-            "Page 3"
-        )
-        
-        titles.forEach { title ->
-            contentDelegate.onTitleChange(session, title)
+        listOf("Page 1", "Page 2", "Page 3").forEach {
+            contentDelegate.onTitleChange(session, it)
         }
-        
-        verify(module, times(3)).sendViewEvent(eq(testViewId), eq("onTitleChange"), any())
+        verify(exactly = 3) { module.sendViewEvent(testViewId, "onTitleChange", any()) }
     }
-
-    /*
-     * NOTE: Context menu test commented out - see note above about final class mocking
-    @Test
-    fun `title change followed by context menu emits both events`() { ... }
-    */
 
     @Test
     fun `focus exit followed by regular title change works correctly`() {
         contentDelegate.onTitleChange(session, "__FOCUS_EXIT__:UP")
         contentDelegate.onTitleChange(session, "Normal Title")
-        
-        verify(module, times(1)).sendViewEvent(eq(testViewId), eq("onFocusExit"), any())
-        verify(module, times(1)).sendViewEvent(eq(testViewId), eq("onTitleChange"), any())
+
+        verify(exactly = 1) { module.sendViewEvent(testViewId, "onFocusExit", any()) }
+        verify(exactly = 1) { module.sendViewEvent(testViewId, "onTitleChange", any()) }
     }
 
     @Test
     fun `rapid title changes do not cause issues`() {
-        repeat(100) { i ->
-            contentDelegate.onTitleChange(session, "Title $i")
+        repeat(100) { contentDelegate.onTitleChange(session, "Title $it") }
+        verify(exactly = 100) { module.sendViewEvent(testViewId, "onTitleChange", any()) }
+    }
+
+    // Context Menu Events
+    //
+    // ContextElement.type/linkUri/srcUri are public-final fields; set them via
+    // reflection on a relaxed mock so the `when(type)` mapping is exercised.
+
+    private fun contextElement(
+        type: Int,
+        linkUri: String? = null,
+        srcUri: String? = null,
+    ): GeckoSession.ContentDelegate.ContextElement {
+        val el = mockk<GeckoSession.ContentDelegate.ContextElement>(relaxed = true)
+        TestHelpers.setField(el, "type", type)
+        TestHelpers.setField(el, "linkUri", linkUri)
+        TestHelpers.setField(el, "srcUri", srcUri)
+        return el
+    }
+
+    @Test
+    fun `onContextMenu maps TYPE_IMAGE to image and forwards coordinates and uris`() {
+        val params = slot<WritableMap>()
+        every { module.sendViewEvent(testViewId, "onContextMenu", capture(params)) } returns Unit
+
+        val element = contextElement(
+            GeckoSession.ContentDelegate.ContextElement.TYPE_IMAGE,
+            linkUri = "https://example.com/page",
+            srcUri = "https://example.com/cat.png",
+        )
+        contentDelegate.onContextMenu(session, 12, 34, element)
+
+        verify { module.sendViewEvent(testViewId, "onContextMenu", any()) }
+        assertEquals("image", params.captured.getString("type"))
+        assertEquals(12, params.captured.getInt("x"))
+        assertEquals(34, params.captured.getInt("y"))
+        assertEquals("https://example.com/page", params.captured.getString("linkUri"))
+        assertEquals("https://example.com/cat.png", params.captured.getString("srcUri"))
+    }
+
+    @Test
+    fun `onContextMenu maps TYPE_VIDEO to video`() {
+        val params = slot<WritableMap>()
+        every { module.sendViewEvent(testViewId, "onContextMenu", capture(params)) } returns Unit
+
+        contentDelegate.onContextMenu(
+            session, 0, 0,
+            contextElement(GeckoSession.ContentDelegate.ContextElement.TYPE_VIDEO, srcUri = "https://v.example/m.mp4"),
+        )
+
+        assertEquals("video", params.captured.getString("type"))
+        assertEquals("https://v.example/m.mp4", params.captured.getString("srcUri"))
+    }
+
+    @Test
+    fun `onContextMenu maps TYPE_AUDIO to audio`() {
+        val params = slot<WritableMap>()
+        every { module.sendViewEvent(testViewId, "onContextMenu", capture(params)) } returns Unit
+
+        contentDelegate.onContextMenu(
+            session, 0, 0,
+            contextElement(GeckoSession.ContentDelegate.ContextElement.TYPE_AUDIO),
+        )
+
+        assertEquals("audio", params.captured.getString("type"))
+    }
+
+    @Test
+    fun `onContextMenu maps TYPE_NONE to none`() {
+        val params = slot<WritableMap>()
+        every { module.sendViewEvent(testViewId, "onContextMenu", capture(params)) } returns Unit
+
+        contentDelegate.onContextMenu(
+            session, 0, 0,
+            contextElement(GeckoSession.ContentDelegate.ContextElement.TYPE_NONE, linkUri = "https://link.example"),
+        )
+
+        assertEquals("none", params.captured.getString("type"))
+        assertEquals("https://link.example", params.captured.getString("linkUri"))
+    }
+
+    @Test
+    fun `onContextMenu maps an unrecognized type to none`() {
+        val params = slot<WritableMap>()
+        every { module.sendViewEvent(testViewId, "onContextMenu", capture(params)) } returns Unit
+
+        contentDelegate.onContextMenu(session, 0, 0, contextElement(Int.MAX_VALUE))
+
+        assertEquals("none", params.captured.getString("type"))
+    }
+
+    @Test
+    fun `onContextMenu forwards null link and src uris`() {
+        val params = slot<WritableMap>()
+        every { module.sendViewEvent(testViewId, "onContextMenu", capture(params)) } returns Unit
+
+        contentDelegate.onContextMenu(
+            session, 5, 6,
+            contextElement(GeckoSession.ContentDelegate.ContextElement.TYPE_IMAGE),
+        )
+
+        verify { module.sendViewEvent(testViewId, "onContextMenu", any()) }
+        assertEquals("image", params.captured.getString("type"))
+    }
+
+    // Content process death (Codex final review F1)
+
+    @Test
+    fun `a crash gives up the focus the session's media delegate holds`() {
+        // GeckoView has closed the session, and no pause or stop follows.
+        val media: MediaDelegate = mockk(relaxed = true)
+        every { session.mediaSessionDelegate } returns media
+
+        contentDelegate.onCrash(session)
+
+        verify(exactly = 1) { media.release() }
+    }
+
+    @Test
+    fun `a kill gives up the focus the session's media delegate holds`() {
+        val media: MediaDelegate = mockk(relaxed = true)
+        every { session.mediaSessionDelegate } returns media
+
+        contentDelegate.onKill(session)
+
+        verify(exactly = 1) { media.release() }
+    }
+
+    /**
+     * [death] reports that the content process died: the view hears why, in
+     * one event, once the session's media delegate has given up its focus.
+     */
+    private fun assertReportsContentProcessGone(reason: String, death: () -> Unit) {
+        val media: MediaDelegate = mockk(relaxed = true)
+        every { session.mediaSessionDelegate } returns media
+        // GeckoView closes the session before it calls onCrash or onKill.
+        every { session.isOpen } returns false
+        val params = slot<WritableMap>()
+        every { module.sendViewEvent(testViewId, "onContentProcessGone", capture(params)) } returns Unit
+
+        death()
+
+        verifyOrder {
+            media.release()
+            module.sendViewEvent(testViewId, "onContentProcessGone", any())
         }
-        
-        verify(module, times(100)).sendViewEvent(eq(testViewId), eq("onTitleChange"), any())
+        verify(exactly = 1) { module.sendViewEvent(any(), any(), any()) }
+        assertEquals(mapOf("reason" to reason), params.captured.toHashMap())
+    }
+
+    @Test
+    fun `a crash tells the view its content process is gone`() {
+        assertReportsContentProcessGone("crash") { contentDelegate.onCrash(session) }
+    }
+
+    @Test
+    fun `a kill tells the view its content process is gone`() {
+        assertReportsContentProcessGone("kill") { contentDelegate.onKill(session) }
     }
 }

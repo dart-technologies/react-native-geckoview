@@ -3,10 +3,15 @@ import type { CodegenTypes, HostComponent, ViewProps } from 'react-native';
 
 interface NativeProps extends ViewProps {
     sessionKey?: string;
+    // Internal: the JS wrapper sets it when it generated `sessionKey` itself.
+    // No other view can bind that key, so the native view closes the session
+    // when React Native drops it instead of leaving it pooled.
+    closeSessionOnDrop?: boolean;
     source?: { uri: string };
     handleAudioFocus?: boolean;
     contentBlockingEnabled?: boolean;
-    cookieBannerMode?: CodegenTypes.WithDefault<'reject' | 'accept' | 'none', 'reject'>;
+    cookieBannerMode?: CodegenTypes.WithDefault<'reject' | 'accept' | 'none', 'none'>;
+    desktopMode?: CodegenTypes.WithDefault<boolean, true>;
 
     // Event handlers matching types.ts
     onGeckoPageStart?: CodegenTypes.DirectEventHandler<{
@@ -89,6 +94,9 @@ interface NativeProps extends ViewProps {
     }>;
     onFocusExit?: CodegenTypes.DirectEventHandler<{
         direction: 'up' | 'down' | 'left' | 'right';
+    }>;
+    onContentProcessGone?: CodegenTypes.DirectEventHandler<{
+        reason: 'crash' | 'kill';
     }>;
 }
 

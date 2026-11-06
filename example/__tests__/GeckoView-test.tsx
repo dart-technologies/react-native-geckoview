@@ -11,16 +11,14 @@ import '../setup';
 import React from 'react';
 import renderer, { ReactTestRenderer, ReactTestInstance } from 'react-test-renderer';
 import { NativeModules } from 'react-native';
-import { clearFabricGlobals, fixtures, GeckoViewModuleMock } from './testUtils';
+import { fixtures, GeckoViewModuleMock } from './testUtils';
 
 // Use shared mock setup
-jest.mock('react-native', () => require('./testUtils').setupReactNativeMock());
 
 import GeckoView, { GeckoViewRef } from 'react-native-geckoview';
 
 describe('GeckoView Component', () => {
     beforeEach(() => {
-        clearFabricGlobals();
         jest.clearAllMocks();
     });
 
@@ -38,7 +36,7 @@ describe('GeckoView Component', () => {
             tree = renderer.create(<GeckoView handleAudioFocus={true} />);
         });
         const instance: ReactTestInstance = tree!.root;
-        const nativeComponent = instance.findByType('NativeGeckoView' as any);
+        const nativeComponent = instance.findByType('GeckoView' as any);
         expect(nativeComponent.props.handleAudioFocus).toBe(true);
     });
 
@@ -66,7 +64,7 @@ describe('GeckoView Component', () => {
         expect(geckoModule.reload).toHaveBeenCalledWith(fixtures.sessionKeys.default);
 
         ref.current!.resolvePrompt('prompt-id', true, 'text', 'user');
-        expect(geckoModule.resolvePrompt).toHaveBeenCalledWith('prompt-id', true, 'text', 'user');
+        expect(geckoModule.resolvePrompt).toHaveBeenCalledWith('prompt-id', true, 'text', 'user', undefined);
 
         ref.current!.setEnhancedTrackingProtectionLevel(1);
         expect(geckoModule.setEnhancedTrackingProtectionLevel).toHaveBeenCalledWith(1);

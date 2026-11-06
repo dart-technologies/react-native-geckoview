@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  # Pull requests into a release branch get CI before they merge, not only
+  # afterwards through the release branch's own PR into main. Pushes to a
+  # release branch don't trigger CI themselves: each one re-runs that PR.
+  pull_request:
+    branches: [main, "release/**"]
+  # Manual runs, e.g. for a branch with no open PR. GitHub only dispatches a
+  # workflow whose file is on the default branch, so this needs ci.yml on main.
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Every job only reads the repository. Artifact uploads use the Actions runtime
+# token, not GITHUB_TOKEN.
+permissions:
+  contents: read
+
+jobs:
+  js:
+    name: JS (lint + typecheck + test + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - name: Lint
+        run: yarn lint
+
+      - name: Typecheck library
+        run: yarn typecheck
+
+      - name: Typecheck example
+        working-directory: example
+        run: yarn typecheck
+
+      - name: Build library
+        run: yarn build
+
+      - name: Run Jest
+        run: yarn test --ci --coverage
+
+      - name: Upload build artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: library-build
+          path: lib/
+          if-no-files-found: error
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jest-coverage
+          path: example/coverage/
+          if-no-files-found: ignore
+
+  kotlin:
+    name: Kotlin unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          java: "true"
+          gradle: "true"
+
+      - name: Run Kotlin unit tests (debug + release variants)
+        working-directory: example/android
+        run: ./gradlew :react-native-geckoview:testDebugUnitTest :react-native-geckoview:testReleaseUnitTest --stacktrace
+
+      - name: Upload Kotlin test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kotlin-test-reports
+          path: |
+            example/android/**/build/reports/tests/
+            example/android/**/build/test-results/
+          if-no-files-found: ignore
+
+  android-build:
+    name: Android example (assembleRelease)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          java: "true"
+          gradle: "true"
+
+      - name: Prepare debug keystore
+        working-directory: example/android
+        run: |
+          chmod +x gradlew
+          if [ ! -f app/debug.keystore ]; then
+            keytool -genkeypair -v -keystore app/debug.keystore \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass android -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Build release APK
+        working-directory: example/android
+        run: ./gradlew assembleRelease --stacktrace
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+
+      # The library has no runtime dependencies (react and react-native are peers),
+      # so what ships to consumers is its production dependency tree.
+      - name: Audit root (shipped dependencies)
+        run: corepack enable && yarn install --immutable && yarn npm audit --environment production --severity high --recursive
+
+      # The example app is never published; its advisories come from the React
+      # Native toolchain it pins. Reported in the log, but not a failure.
+      - name: Audit example (informational)
+        working-directory: example
+        continue-on-error: true
+        run: corepack enable && yarn install --immutable && yarn npm audit --severity high --recursive
