@@ -110,6 +110,7 @@ function MyBrowser() {
 | Event | Payload | Description |
 |-------|---------|-------------|
 | `onPageError` | `{ uri, errorCode, errorCategory, errorMessage }` | Navigation error occurred |
+| `onContentProcessGone` | `{ reason: 'crash'\|'kill' }` | The page's content process crashed or was killed, and GeckoView closed the session; remount the view to recover ([docs/ADVANCED.md](docs/ADVANCED.md#content-process-crashes)) |
 
 #### Media Events
 

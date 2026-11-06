@@ -95,6 +95,9 @@ interface NativeProps extends ViewProps {
     onFocusExit?: CodegenTypes.DirectEventHandler<{
         direction: 'up' | 'down' | 'left' | 'right';
     }>;
+    onContentProcessGone?: CodegenTypes.DirectEventHandler<{
+        reason: 'crash' | 'kill';
+    }>;
 }
 
 export default codegenNativeComponent<NativeProps>(

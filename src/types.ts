@@ -4,6 +4,7 @@ import type {
     AuthPromptPayload,
     BeforeUnloadPromptPayload,
     ConfirmPromptPayload,
+    ContentProcessGonePayload,
     ContextMenuPayload,
     FocusExitPayload,
     LocationChangePayload,
@@ -25,6 +26,7 @@ export type {
     AuthPromptPayload,
     BeforeUnloadPromptPayload,
     ConfirmPromptPayload,
+    ContentProcessGonePayload,
     ContextMenuPayload,
     FocusExitPayload,
     LocationChangePayload,
@@ -158,6 +160,15 @@ export interface GeckoViewProps extends ViewProps {
 
     /** Fired when D-pad / keyboard focus exits the view boundary. */
     onFocusExit?: GeckoEventHandler<FocusExitPayload>;
+
+    /**
+     * Fired when the content process showing this view's page crashes or is
+     * killed. GeckoView has closed the session: the view stays blank, and
+     * media that was playing has stopped, with no `onMediaSessionAction`
+     * pause or stop guaranteed to follow. Remount the view to recover; see
+     * `docs/ADVANCED.md`.
+     */
+    onContentProcessGone?: GeckoEventHandler<ContentProcessGonePayload>;
 }
 
 /** Result returned from `evaluateJavaScript`. A JSON-parsed value or a string. */

@@ -82,5 +82,6 @@ class GeckoViewManager :
         "topTitleChange" to mapOf("registrationName" to "onTitleChange"),
         "topContextMenu" to mapOf("registrationName" to "onContextMenu"),
         "topFocusExit" to mapOf("registrationName" to "onFocusExit"),
+        "topContentProcessGone" to mapOf("registrationName" to "onContentProcessGone"),
     )
 }
