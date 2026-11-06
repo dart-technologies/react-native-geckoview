@@ -124,6 +124,7 @@ describe('Feature Tests', () => {
 | `App-test.tsx` | Full app integration |
 | `AudioFocus-test.tsx` | Audio focus |
 | `ErrorDelegate-test.tsx` | Error events; the `onContentProcessGone` handler is passed through to the native component |
+| `EventParity-test.tsx` | The codegen spec declares exactly the view events the Kotlin view manager registers |
 | `GeckoView-test.tsx` | Component basics |
 | `GeckoViewAdvanced-test.tsx` | Props, methods |
 | `History-test.tsx` | Navigation history |

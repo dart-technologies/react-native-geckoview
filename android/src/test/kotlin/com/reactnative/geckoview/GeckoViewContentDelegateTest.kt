@@ -319,6 +319,8 @@ class GeckoViewContentDelegateTest {
     private fun assertReportsContentProcessGone(reason: String, death: () -> Unit) {
         val media: MediaDelegate = mockk(relaxed = true)
         every { session.mediaSessionDelegate } returns media
+        // GeckoView closes the session before it calls onCrash or onKill.
+        every { session.isOpen } returns false
         val params = slot<WritableMap>()
         every { module.sendViewEvent(testViewId, "onContentProcessGone", capture(params)) } returns Unit
 

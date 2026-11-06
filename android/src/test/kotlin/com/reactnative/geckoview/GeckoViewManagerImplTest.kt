@@ -600,7 +600,9 @@ class GeckoViewManagerImplTest {
         every { geckoView.id } returns 7
         mountPlaying(geckoView, "shown", mockk(relaxed = true))
 
-        // Through the content delegate the view attached when it bound the session.
+        // Through the content delegate the view attached when it bound the
+        // session, which GeckoView has closed by then.
+        every { session.isOpen } returns false
         death(contentDelegateSet!!)
 
         verify(exactly = 1) {
@@ -647,6 +649,8 @@ class GeckoViewManagerImplTest {
             manager.onDropViewInstance(geckoView)
             mount(next, "pooled")
         }
+        // GeckoView closes the session before it reports the crash.
+        every { session.isOpen } returns false
         contentDelegateSet!!.onCrash(session)
 
         // The new view's content delegate replaced the one the session had,
