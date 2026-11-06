@@ -295,8 +295,52 @@ assumes it stays ON.
 
 *   **Reuse Sessions**: Use `sessionKey` to persist state (cookies, history, cache) across component unmounts. This avoids expensive re-initialization. A page keeps playing after its view unmounts. With `handleAudioFocus`, the library keeps handling the session's audio focus while no view shows it, until the session closes (`closeSession()`, `shutdown()` or the AAOS playback gate) or its content process dies: it holds focus while the page plays (taking it again if the page starts playing later) and pauses the page on a focus loss. A view that binds the same `sessionKey` carries that focus on without requesting it again, and gets `onMediaSessionAction` events `activated` and `play` for media already active or playing (not `metadata`, which isn't repeated). The carry-over is short when the remount also passes `source`: the view loads that URI into the pooled session, which stops the page's media, and the focus is given up as for any stop.
 *   **Limit Concurrent Sessions**: Each `GeckoSession` consumes significant memory. Close a view's session with `ref.closeSession()`; `ref.shutdown()` tears down the runtime and every session in the process.
-*   **Closed sessions stay closed**: sessions are created and opened only when a mounted view binds its `sessionKey`. After `closeSession()`, ref methods on that view never rebuild the session: `reload`, `goBack`, `goForward`, `stop`, `loadUrl` and `setUserAgent` do nothing, `evaluateJavaScript` rejects with `EVAL_BRIDGE_UNAVAILABLE` and `captureSnapshot` rejects with `VIEW_NOT_FOUND`. Remount the `GeckoView` (for example by changing its React `key`) to get a fresh session. A session GeckoView closed itself because its content process died is reopened when a view binds its `sessionKey` again, and loads that view's `source` afresh.
+*   **Closed sessions stay closed**: sessions are created and opened only when a mounted view binds its `sessionKey`. After `closeSession()`, ref methods on that view never rebuild the session: `reload`, `goBack`, `goForward`, `stop`, `loadUrl` and `setUserAgent` do nothing, `evaluateJavaScript` rejects with `EVAL_BRIDGE_UNAVAILABLE` and `captureSnapshot` rejects with `VIEW_NOT_FOUND`. Remount the `GeckoView` (for example by changing its React `key`) to get a fresh session. A session GeckoView closed itself because its content process died is reopened when a view binds its `sessionKey` again, and loads that view's `source` afresh; see [Content-process crashes](#content-process-crashes).
 *   **AAOS playback gate**: while the host has called `GeckoSessionManager.setPlaybackAllowed(false)`, every session is closed and the `sessionKey` and `source` props are dropped, not queued. `setPlaybackAllowed(true)` never reopens a session or resumes media, so remount the `GeckoView` once playback is allowed again.
+
+### Content-process crashes
+
+GeckoView closes a session itself when its content process crashes, or when the system kills it, often to reclaim memory. The view showing the session goes blank, and media that was playing stops; no `onMediaSessionAction` `pause` or `stop` is guaranteed to follow. The library gives up any audio focus it held for the session, then fires `onContentProcessGone` on that view, with `reason` `'crash'` or `'kill'`. A pooled session that no view shows fires nothing; the next view to bind its `sessionKey` reopens it.
+
+The mounted view keeps the closed session, and `ref.reload()` doesn't bring the page back, because it goes to that closed session. Remount the view to recover, for example by changing its React `key`:
+
+*   **Same `sessionKey`**: the pool reopens the session GeckoView closed (`GeckoSessionManager.ensureSessionOpen`), and the view loads its `source` afresh. The page's history and in-memory state are lost; cookies and the cache belong to the runtime, so they survive.
+*   **Fresh `sessionKey`**: the view gets a new session. A view reads `sessionKey` only when it mounts, so this takes a remount too. A view mounted without a `sessionKey` gets a new generated key each time it mounts, so remounting it is always this case. Call `closeSession()` on the old view first, so the dead session doesn't stay pooled under the old key.
+
+Don't call `closeSession()` and remount with the same `sessionKey` together. `closeSession()` reaches the UI thread by way of the native-modules thread, so it can close the reopened session after the new view has bound it: the view stays blank, and no event fires. The same goes for a `closeSession()` in an unmount cleanup, such as a `useEffect` cleanup, that runs during the remount.
+
+A page that crashes its content process each time it loads fires the event again after every remount, so cap the deaths that come in a row, not those over the view's lifetime: an app that runs for days, as on a TV or in a car, sees the occasional low-memory kill.
+
+```javascript
+const MAX_IN_A_ROW = 3;
+const IN_A_ROW_MS = 60_000; // a death later than this after the last starts a new count
+
+function ResilientBrowser() {
+  const [deaths, setDeaths] = useState({ mount: 0, inARow: 0, last: 0 });
+
+  if (deaths.inARow > MAX_IN_A_ROW) {
+    return <ErrorBanner message="This page keeps crashing." />;
+  }
+
+  return (
+    <GeckoView
+      key={deaths.mount} // a new key remounts the view
+      sessionKey="main"
+      source={{ uri: 'https://example.com' }}
+      onContentProcessGone={(e) => {
+        console.warn('Content process gone:', e.nativeEvent.reason); // 'crash' | 'kill'
+        const now = Date.now();
+        setDeaths((d) => ({
+          mount: d.mount + 1, // the pool reopens "main" for the new view
+          inARow: now - d.last < IN_A_ROW_MS ? d.inARow + 1 : 1,
+          last: now,
+        }));
+      }}
+      style={{ flex: 1 }}
+    />
+  );
+}
+```
 
 ### Rendering
 

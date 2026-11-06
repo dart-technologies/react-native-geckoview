@@ -104,8 +104,9 @@ describe('Feature Tests', () => {
 | `GeckoRuntimeManagerTest.kt` | Runtime lifecycle; `shutdown` lock order against `GeckoSessionManager`; **runtime-pref assertions (autoplay/EME blocked by default via `GeckoPreferenceController`, no signature-weakening prefs, no runtime arguments) + `configureSecurity → autoGrantDrm/Autoplay` propagation (security guard)** |
 | `GeckoSecurityConfigTest.kt` | Pins `GeckoSecurityConfig.set()` propagation to the permission delegate |
 | `GeckoSessionManagerTest.kt` | Session pooling + concurrency stress (ConcurrentModificationException regression); UI-thread-only session creation; `init` never reopens pooled sessions; a session GeckoView closed itself reopens on the next bind; every close path reports its sessions to the modules before closing them; a play delivered after a close takes no focus |
-| `GeckoViewContentDelegateTest.kt` | Title / focus-exit events; a content-process crash or kill gives up the session's audio focus |
-| `GeckoViewManagerImplTest.kt` | View manager prop plumbing; `handleAudioFocus` in either prop order (also through `ViewManager.updateProperties`) and toggled on a mounted view; a view dropped mid-playback leaves its pooled session's audio focus handled, a view that binds the session carries it on, and a session whose content process dies gives its focus up; teardown with no session or with a throwing `releaseSession` |
+| `GeckoViewContentDelegateTest.kt` | Title / focus-exit events; a content-process crash or kill gives up the session's audio focus, then sends the view one `onContentProcessGone` with its `reason` |
+| `GeckoViewManagerImplTest.kt` | View manager prop plumbing; `handleAudioFocus` in either prop order (also through `ViewManager.updateProperties`) and toggled on a mounted view; a view dropped mid-playback leaves its pooled session's audio focus handled, a view that binds the session carries it on, and a session whose content process dies gives its focus up; that death reaches the view showing the session as one `onContentProcessGone`, including a view that took the session over in a remount (in either order), and no view when none shows it; teardown with no session or with a throwing `releaseSession` |
+| `GeckoViewManagerNewArchTest.kt` | Pins the view name and the exact set of exported direct events (19), each `top*` name mapped to its `on*` registration name |
 | `GeckoViewModuleTest.kt` | **`isSafeLoadUrl` + `jsonEncodeString` adversarial matrix (security guard)**; per-session snapshot cleanup on `closeSession`, shutdown and the playback restriction, and saves refused once the gate closes; `captureSnapshot` branch coverage and UI-thread capture; ref methods never create sessions; typed `resolvePrompt` + prompt-timeout coverage for Alert/Button/Text; view events never coalesced |
 | `GeckoViewNavigationDelegateTest.kt` | **`onLoadRequest` scheme gate + `sanitizeParsedIntent` + Play Store `appId` + host-spoof guards + `geo:`/maps launches need confirmation + `onNewSession` popup filter (security guard)** |
 | `GeckoViewPermissionDelegateTest.kt` | Security-first DRM/autoplay prompts + explicit opt-in paths |
@@ -122,7 +123,8 @@ describe('Feature Tests', () => {
 | `testUtils.ts` | **Shared mock utilities and fixtures** |
 | `App-test.tsx` | Full app integration |
 | `AudioFocus-test.tsx` | Audio focus |
-| `ErrorDelegate-test.tsx` | Error events |
+| `ErrorDelegate-test.tsx` | Error events; the `onContentProcessGone` handler is passed through to the native component |
+| `EventParity-test.tsx` | The codegen spec declares exactly the view events the Kotlin view manager registers |
 | `GeckoView-test.tsx` | Component basics |
 | `GeckoViewAdvanced-test.tsx` | Props, methods |
 | `History-test.tsx` | Navigation history |

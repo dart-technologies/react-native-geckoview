@@ -76,6 +76,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - CI: install the Android SDK command-line tools on ubuntu-26.04 runners,
   give jobs a read-only token, and audit the library's shipped dependencies.
 
+### Added — API
+
+- `onContentProcessGone` view event, `{ reason: 'crash' | 'kill' }`. GeckoView
+  closes a session itself when its content process crashes or is killed, and
+  the library only gave up the session's audio focus: nothing reached JS, so a
+  mounted view stayed blank, and a media UI still showed "playing", until the
+  host happened to remount it. The view showing the session now gets the event
+  once that focus is given up, so the host can show an error and remount the
+  view, with the same `sessionKey` (the pool reopens the session) or a fresh
+  one. See [docs/ADVANCED.md](docs/ADVANCED.md#content-process-crashes).
+
 ### Security
 
 Security audit and hardening pass. 24 findings across 5 severity tiers
