@@ -287,4 +287,27 @@ class GeckoViewContentDelegateTest {
         verify { module.sendViewEvent(testViewId, "onContextMenu", any()) }
         assertEquals("image", params.captured.getString("type"))
     }
+
+    // Content process death (Codex final review F1)
+
+    @Test
+    fun `a crash gives up the focus the session's media delegate holds`() {
+        // GeckoView has closed the session, and no pause or stop follows.
+        val media: MediaDelegate = mockk(relaxed = true)
+        every { session.mediaSessionDelegate } returns media
+
+        contentDelegate.onCrash(session)
+
+        verify(exactly = 1) { media.release() }
+    }
+
+    @Test
+    fun `a kill gives up the focus the session's media delegate holds`() {
+        val media: MediaDelegate = mockk(relaxed = true)
+        every { session.mediaSessionDelegate } returns media
+
+        contentDelegate.onKill(session)
+
+        verify(exactly = 1) { media.release() }
+    }
 }

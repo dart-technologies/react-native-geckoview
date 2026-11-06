@@ -1,8 +1,13 @@
 package com.reactnative.geckoview
 
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import com.facebook.react.bridge.JavaOnlyMap
 import com.facebook.react.bridge.ReadableMap
+import com.facebook.react.bridge.WritableMap
+import com.facebook.react.uimanager.ReactStylesDiffMap
 import com.facebook.react.uimanager.ThemedReactContext
+import io.mockk.MockKMatcherScope
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
@@ -11,12 +16,16 @@ import io.mockk.verify
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
+import org.mozilla.geckoview.MediaSession
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
@@ -49,7 +58,9 @@ class GeckoViewManagerImplTest {
         
         every { geckoView.context } returns context
         every { geckoView.session } returns session
-        
+        // The pool hands views open sessions; a relaxed mock would report closed.
+        every { session.isOpen } returns true
+
         // Mock GeckoSessionManager behavior
         every { GeckoSessionManager.init(any()) } returns Unit
         every { GeckoSessionManager.getOrCreateSession(any()) } returns session
@@ -270,7 +281,7 @@ class GeckoViewManagerImplTest {
     // ========== onDropViewInstance ==========
 
     @Test
-    fun `onDropViewInstance nulls every delegate and releases the session`() {
+    fun `onDropViewInstance nulls the page delegates and releases the session`() {
         every { geckoView.session } returns session
 
         manager.onDropViewInstance(geckoView)
@@ -280,35 +291,9 @@ class GeckoViewManagerImplTest {
         verify { session.permissionDelegate = null }
         verify { session.progressDelegate = null }
         verify { session.contentDelegate = null }
+        // A media delegate this library didn't attach is dropped too.
         verify { session.mediaSessionDelegate = null }
         verify { geckoView.releaseSession() }
-    }
-
-    @Test
-    fun `onDropViewInstance abandons audio focus taken during playback`() {
-        TestHelpers.mockArguments()
-        try {
-            var attached: org.mozilla.geckoview.MediaSession.Delegate? = null
-            every { session.mediaSessionDelegate = any() } answers { attached = firstArg() }
-            every { session.mediaSessionDelegate } answers { attached }
-            every { geckoView.session } returns null
-            manager.setHandleAudioFocus(geckoView, true)
-            manager.setSessionKey(geckoView, "playing")
-
-            // The page starts playback: the view's MediaDelegate takes audio focus.
-            val delegate = attached as MediaDelegate
-            delegate.onPlay(session, mockk(relaxed = true))
-            verify(exactly = 1) { audioManager.requestAudioFocus(any<android.media.AudioFocusRequest>()) }
-
-            // The view is dropped mid-playback; no onPause/onStop will follow.
-            every { geckoView.session } returns session
-            manager.onDropViewInstance(geckoView)
-
-            verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<android.media.AudioFocusRequest>()) }
-            verify { session.mediaSessionDelegate = null }
-        } finally {
-            TestHelpers.unmockArguments()
-        }
     }
 
     @Test
@@ -325,9 +310,317 @@ class GeckoViewManagerImplTest {
         every { geckoView.session } returns session
         every { geckoView.releaseSession() } throws RuntimeException("release boom")
 
-        // The catch (L178-179) must absorb the failure rather than crashing
-        // view teardown.
+        // The catch must absorb the failure rather than crashing view teardown.
         manager.onDropViewInstance(geckoView)
+    }
+
+    @Test
+    fun `onDropViewInstance swallows an Error from releaseSession too`() {
+        every { geckoView.session } returns session
+        every { geckoView.releaseSession() } throws NoSuchMethodError("release boom")
+
+        // The catch takes any Throwable: a LinkageError from GeckoView would
+        // crash view teardown just the same.
+        manager.onDropViewInstance(geckoView)
+    }
+
+    // The media and content delegates the code last set on [session].
+    private var mediaDelegateSet: MediaSession.Delegate? = null
+    private var contentDelegateSet: GeckoSession.ContentDelegate? = null
+
+    private fun recordSessionDelegates() {
+        every { session.mediaSessionDelegate = any() } answers { mediaDelegateSet = firstArg() }
+        every { session.mediaSessionDelegate } answers { mediaDelegateSet }
+        every { session.contentDelegate = any() } answers { contentDelegateSet = firstArg() }
+        every { session.contentDelegate } answers { contentDelegateSet }
+    }
+
+    /** Makes [view] report the session bound to it, as a real GeckoView does. */
+    private fun trackSession(view: GeckoView) {
+        var bound: GeckoSession? = null
+        every { view.session } answers { bound }
+        every { view.setSession(any()) } answers { bound = firstArg() }
+        every { view.releaseSession() } answers { bound.also { bound = null } }
+    }
+
+    /** A view the host mounts later, like [geckoView]. */
+    private fun newView(id: Int): GeckoView = mockk<GeckoView>(relaxed = true).also {
+        every { it.context } returns context
+        every { it.id } returns id
+        trackSession(it)
+    }
+
+    /**
+     * One props transaction mounting [view] on the pooled [session]:
+     * handleAudioFocus on and the sessionKey, in whichever order React Native
+     * applies them, then onAfterUpdateTransaction.
+     */
+    private fun mount(view: GeckoView, key: String, sessionKeyFirst: Boolean = false) {
+        if (sessionKeyFirst) {
+            manager.setSessionKey(view, key)
+            manager.setHandleAudioFocus(view, true)
+        } else {
+            manager.setHandleAudioFocus(view, true)
+            manager.setSessionKey(view, key)
+        }
+        manager.onAfterUpdateTransaction(view)
+    }
+
+    /** Mounts [view] and starts [media] playing on the media delegate the session then has. */
+    private fun mountPlaying(
+        view: GeckoView,
+        key: String,
+        media: MediaSession,
+        sessionKeyFirst: Boolean = false,
+    ): MediaDelegate {
+        trackSession(view)
+        mount(view, key, sessionKeyFirst)
+        return (mediaDelegateSet as MediaDelegate).also { it.onPlay(session, media) }
+    }
+
+    private fun MockKMatcherScope.action(name: String) = match<WritableMap> { it.getString("action") == name }
+
+    @Test
+    fun `onDropViewInstance keeps handling audio focus for a session still playing`() {
+        // Codex final review F1: the drop gave up the focus the page was playing
+        // under, but the pooled session kept playing, with nothing left to
+        // pause it when another app took focus.
+        TestHelpers.mockArguments()
+        try {
+            recordSessionDelegates()
+            val media: MediaSession = mockk(relaxed = true)
+            val delegate = mountPlaying(geckoView, "playing", media)
+            verify(exactly = 1) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
+
+            // The view is dropped mid-playback; the pooled session plays on.
+            manager.onDropViewInstance(geckoView)
+
+            assertSame(delegate, mediaDelegateSet)
+            verify(exactly = 0) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+
+            // Another app takes focus: the page is paused, and once GeckoView
+            // reports the pause the delegate gives focus up, with no event for
+            // the dropped view.
+            delegate.audioFocusChangeListener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS)
+            verify(exactly = 1) { media.pause() }
+            delegate.onPause(session, media)
+            verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+            verify(exactly = 1) { module.sendViewEvent(any(), "onMediaSessionAction", any()) }
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    @Test
+    fun `handleAudioFocus applies whichever of the view's props React Native sets first`() {
+        // React Native applies a batch's prop setters in no fixed order; release
+        // builds tend to apply sessionKey, which the JS wrapper passes last,
+        // first. The delegate it binds then started without focus handling.
+        TestHelpers.mockArguments()
+        try {
+            recordSessionDelegates()
+
+            mountPlaying(geckoView, "key-first", mockk(relaxed = true), sessionKeyFirst = true)
+
+            verify(exactly = 1) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    @Test
+    fun `the view manager applies handleAudioFocus once a batch of props lands`() {
+        // Through React Native's own path: ViewManager.updateProperties runs the
+        // setters in the props map's order, then onAfterUpdateTransaction.
+        TestHelpers.mockArguments()
+        try {
+            recordSessionDelegates()
+            trackSession(geckoView)
+            every { geckoView.getTag(any()) } returns null
+            val props: ReadableMap = mockk(relaxed = true)
+            every { props.entryIterator } answers {
+                linkedMapOf<String, Any>("sessionKey" to "batched", "handleAudioFocus" to true)
+                    .entries.iterator()
+            }
+
+            GeckoViewManager().updateProperties(geckoView, ReactStylesDiffMap(props))
+            (mediaDelegateSet as MediaDelegate).onPlay(session, mockk(relaxed = true))
+
+            verify(exactly = 1) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    @Test
+    fun `turning handleAudioFocus off on a mounted view gives its focus up, and on again takes it`() {
+        TestHelpers.mockArguments()
+        try {
+            recordSessionDelegates()
+            mountPlaying(geckoView, "toggled", mockk(relaxed = true))
+
+            manager.setHandleAudioFocus(geckoView, false)
+            manager.onAfterUpdateTransaction(geckoView)
+            verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+
+            manager.setHandleAudioFocus(geckoView, true)
+            manager.onAfterUpdateTransaction(geckoView)
+            verify(exactly = 2) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    private fun assertRemountKeepsFocus(sessionKeyFirst: Boolean) {
+        recordSessionDelegates()
+        every { geckoView.id } returns 7
+        val media: MediaSession = mockk(relaxed = true)
+        val delegate = mountPlaying(geckoView, "pooled", media)
+        manager.onDropViewInstance(geckoView)
+
+        // The host remounts: a new view binds the same pooled session.
+        mount(newView(42), "pooled", sessionKeyFirst)
+
+        // The same delegate now reports to the new view and keeps the focus:
+        // a fresh request would interrupt whatever else is playing, such as
+        // another app's navigation prompt.
+        assertSame(delegate, mediaDelegateSet)
+        verify(exactly = 1) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
+        verify(exactly = 0) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+        // The new view hears that the page is playing, and the page is now its
+        // to pause on a focus loss.
+        verify(exactly = 1) { module.sendViewEvent(42, "onMediaSessionAction", action("play")) }
+        delegate.audioFocusChangeListener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS)
+        verify(exactly = 1) { media.pause() }
+        delegate.onPause(session, media)
+        verify(exactly = 1) { module.sendViewEvent(42, "onMediaSessionAction", action("pause")) }
+        verify(exactly = 1) { module.sendViewEvent(7, "onMediaSessionAction", any()) }
+    }
+
+    @Test
+    fun `a view that binds a dropped view's pooled session keeps its audio focus without a new request`() {
+        TestHelpers.mockArguments()
+        try {
+            assertRemountKeepsFocus(sessionKeyFirst = false)
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    @Test
+    fun `a remount whose sessionKey lands first keeps the focus too`() {
+        // The view's handleAudioFocus isn't set yet when its sessionKey binds the
+        // session; the delegate must not give focus up in between.
+        TestHelpers.mockArguments()
+        try {
+            assertRemountKeepsFocus(sessionKeyFirst = true)
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    @Test
+    fun `onDropViewInstance gives up the focus of a session GeckoView already closed`() {
+        // The content process died while the view showed the page: GeckoView
+        // closed the session, and no pause or stop followed.
+        TestHelpers.mockArguments()
+        try {
+            recordSessionDelegates()
+            mountPlaying(geckoView, "crashed", mockk(relaxed = true))
+            every { session.isOpen } returns false
+
+            manager.onDropViewInstance(geckoView)
+
+            verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+            assertNull(mediaDelegateSet)
+            assertNull(contentDelegateSet)
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    private fun assertHiddenSessionDeathGivesUpFocus(death: (GeckoSession.ContentDelegate) -> Unit) {
+        recordSessionDelegates()
+        mountPlaying(geckoView, "hidden", mockk(relaxed = true))
+        manager.onDropViewInstance(geckoView)
+        verify(exactly = 0) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+
+        // GeckoView reports a dead content process, and closes the session,
+        // only through the session's content delegate.
+        death(contentDelegateSet!!)
+
+        verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+    }
+
+    @Test
+    fun `a pooled session whose content process crashes while no view shows it gives its focus up`() {
+        TestHelpers.mockArguments()
+        try {
+            assertHiddenSessionDeathGivesUpFocus { it.onCrash(session) }
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    @Test
+    fun `a pooled session whose content process is killed while no view shows it gives its focus up`() {
+        TestHelpers.mockArguments()
+        try {
+            assertHiddenSessionDeathGivesUpFocus { it.onKill(session) }
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    @Test
+    fun `a view that binds a session reopened after a crash reuses its released media delegate`() {
+        // GeckoView closes the session when its content process dies, the view's
+        // content delegate releases the media delegate, and the pool reopens the
+        // session for the next view that binds its key.
+        TestHelpers.mockArguments()
+        try {
+            recordSessionDelegates()
+            val media: MediaSession = mockk(relaxed = true)
+            val first = mountPlaying(geckoView, "pooled", media)
+            first.onActivated(session, media)
+            every { session.isOpen } returns false
+            contentDelegateSet!!.onCrash(session)
+            verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+            every { session.isOpen } returns true
+
+            mount(newView(42), "pooled")
+
+            // The released delegate carries no stale state to the new view...
+            assertSame(first, mediaDelegateSet)
+            verify(exactly = 0) { module.sendViewEvent(42, "onMediaSessionAction", any()) }
+            // ...and new playback takes focus again, reporting to that view.
+            first.onPlay(session, media)
+            verify(exactly = 2) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
+            verify(exactly = 1) { module.sendViewEvent(42, "onMediaSessionAction", action("play")) }
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    @Test
+    fun `a view that binds a session still closed gets a fresh media delegate`() {
+        TestHelpers.mockArguments()
+        try {
+            recordSessionDelegates()
+            val first = mountPlaying(geckoView, "pooled", mockk(relaxed = true))
+            // GeckoView closed the session when its content process died, and the
+            // pool couldn't reopen it before another view bound the same key.
+            every { session.isOpen } returns false
+
+            mount(newView(42), "pooled")
+
+            // The dead page's focus is given up, and none is requested for it.
+            assertNotSame(first, mediaDelegateSet)
+            verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+            verify(exactly = 1) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
+        } finally {
+            TestHelpers.unmockArguments()
+        }
     }
 
     // ========== catch-path coverage ==========

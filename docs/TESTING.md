@@ -103,15 +103,15 @@ describe('Feature Tests', () => {
 | `GeckoLogTest.kt` | Pins the `GeckoLog` symbol + signature |
 | `GeckoRuntimeManagerTest.kt` | Runtime lifecycle; `shutdown` lock order against `GeckoSessionManager`; **runtime-pref assertions (autoplay/EME blocked by default via `GeckoPreferenceController`, no signature-weakening prefs, no runtime arguments) + `configureSecurity → autoGrantDrm/Autoplay` propagation (security guard)** |
 | `GeckoSecurityConfigTest.kt` | Pins `GeckoSecurityConfig.set()` propagation to the permission delegate |
-| `GeckoSessionManagerTest.kt` | Session pooling + concurrency stress (ConcurrentModificationException regression); UI-thread-only session creation; `init` never reopens pooled sessions |
-| `GeckoViewContentDelegateTest.kt` | Title / focus-exit events |
-| `GeckoViewManagerImplTest.kt` | View manager prop plumbing; teardown during playback abandons audio focus |
-| `GeckoViewModuleTest.kt` | **`isSafeLoadUrl` + `jsonEncodeString` adversarial matrix (security guard)**; per-session snapshot cleanup; `captureSnapshot` branch coverage and UI-thread capture; ref methods never create sessions; typed `resolvePrompt` + prompt-timeout coverage for Alert/Button/Text |
+| `GeckoSessionManagerTest.kt` | Session pooling + concurrency stress (ConcurrentModificationException regression); UI-thread-only session creation; `init` never reopens pooled sessions; a session GeckoView closed itself reopens on the next bind; every close path reports its sessions to the modules before closing them; a play delivered after a close takes no focus |
+| `GeckoViewContentDelegateTest.kt` | Title / focus-exit events; a content-process crash or kill gives up the session's audio focus |
+| `GeckoViewManagerImplTest.kt` | View manager prop plumbing; `handleAudioFocus` in either prop order (also through `ViewManager.updateProperties`) and toggled on a mounted view; a view dropped mid-playback leaves its pooled session's audio focus handled, a view that binds the session carries it on, and a session whose content process dies gives its focus up; teardown with no session or with a throwing `releaseSession` |
+| `GeckoViewModuleTest.kt` | **`isSafeLoadUrl` + `jsonEncodeString` adversarial matrix (security guard)**; per-session snapshot cleanup on `closeSession`, shutdown and the playback restriction, and saves refused once the gate closes; `captureSnapshot` branch coverage and UI-thread capture; ref methods never create sessions; typed `resolvePrompt` + prompt-timeout coverage for Alert/Button/Text; view events never coalesced |
 | `GeckoViewNavigationDelegateTest.kt` | **`onLoadRequest` scheme gate + `sanitizeParsedIntent` + Play Store `appId` + host-spoof guards + `geo:`/maps launches need confirmation + `onNewSession` popup filter (security guard)** |
 | `GeckoViewPermissionDelegateTest.kt` | Security-first DRM/autoplay prompts + explicit opt-in paths |
 | `GeckoViewProgressDelegateTest.kt` | Progress events |
 | `GeckoViewPromptDelegateTest.kt` | Alert/popup/auth; eval-looking alerts stay page alerts |
-| `MediaDelegateTest.kt` | Audio focus, media session; `release()` on view or session teardown |
+| `MediaDelegateTest.kt` | Audio focus, media session; `release()` on session close; detaching from and re-attaching to a view, with the media state told to the new view; focus-setting changes; a duck ending with focus coming back or with the request given up; focus changes on the main looper; media events delivered after the session closed are ignored |
 | `WebExtensionBridgeAssetsTest.kt` | Pins that `manifest.json` + `bridge.js` ship under `assets/react_native_geckoview_bridge/` |
 | `WebExtensionTest.kt` | Extension APIs + **`isSafeAssetPath` + `safeSerialize` + install rejection + missing-port guards (security guard)**; `installExtension` single-completion contract; port-scoped disconnect rejection + late-result short-circuit; in-flight evals reject `PLAYBACK_RESTRICTED` on a UX restriction |
 
@@ -156,7 +156,7 @@ The security-hardening fixes are exercised across three layers:
 
 | Layer | Tooling | Scope |
 |---|---|---|
-| Unit + integration | Robolectric + MockK + the `*ForTest` `internal` hooks on `GeckoViewModule` and `WebExtensionController` | `@ReactMethod` end-to-end with mocked `GeckoView` / `GeckoResult` / `GeckoSession.PromptDelegate.*Prompt`. Drives every reject branch of `captureSnapshot`, every prompt-type branch of `schedulePromptTimeout`, single-completion of `installExtension` + port-scoped eval rejection, and the `closeSession → cleanupSnapshotsForSession` per-session scoping. |
+| Unit + integration | Robolectric + MockK + the `*ForTest` `internal` hooks on `GeckoViewModule` and `WebExtensionController` | `@ReactMethod` end-to-end with mocked `GeckoView` / `GeckoResult` / `GeckoSession.PromptDelegate.*Prompt`. Drives every reject branch of `captureSnapshot`, every prompt-type branch of `schedulePromptTimeout`, single-completion of `installExtension` + port-scoped eval rejection, and the per-session snapshot cleanup that every session close (`closeSession`, `shutdown`, the UX restriction) reports to the module. |
 | JS API contract | Jest with the shared `setupReactNativeMock` from `testUtils.ts` | Ref shape, sessionKey forwarding, native-side error-code propagation (`VIEW_NOT_FOUND`, `SNAPSHOT_TOO_LARGE`, `SNAPSHOT_ERROR`, `INVALID_ASSET_PATH`, `COOKIE_BANNER_SET_FAILED`), multi-instance isolation. |
 | E2E | Detox | Navigation, security indicators, theme toggle, user agent switching, progress bar. The current example app does not surface `captureSnapshot`, `closeSession`, or `setCookieBannerMode` through testable UI affordances, so the snapshot/cookie-banner/prompt-timeout fixes are **not** covered at the Detox layer. Their behavior is fully exercised by the unit + JS layers above. |
 

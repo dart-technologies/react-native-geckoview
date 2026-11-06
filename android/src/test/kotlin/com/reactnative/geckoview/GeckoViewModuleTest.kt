@@ -1642,8 +1642,8 @@ class GeckoViewModuleTest {
 
     @Test
     fun `closeSession releases the session and cleans up its snapshots`() {
+        // The real releaseSession runs: it reports the close back to the module.
         mockkObject(GeckoSessionManager)
-        every { GeckoSessionManager.releaseSession(any()) } returns Unit
 
         val module = newModule()
         val tmp = java.io.File.createTempFile("snap-close", ".png").also { it.deleteOnExit() }
@@ -1655,6 +1655,116 @@ class GeckoViewModuleTest {
         verify { GeckoSessionManager.releaseSession("s") }
         assertTrue(module.snapshotsForSessionForTest("s").isEmpty())
         assertFalse("snapshot file must be deleted on close", tmp.exists())
+    }
+
+    // ========== bulk session close (Codex final review F2) ==========
+    //
+    // Shutdown and the UX restriction close sessions through
+    // GeckoSessionManager.closeAllSessions, not closeSession, and skipped its
+    // snapshot cleanup: a save in flight wrote and resolved a screenshot for a
+    // closed session, and saved snapshots stayed on disk.
+
+    private class InFlightCapture(
+        val module: GeckoViewModule,
+        val dir: java.io.File,
+        val saved: java.io.File,
+        val save: Runnable,
+        val bitmap: android.graphics.Bitmap,
+        val promise: Promise,
+    )
+
+    /** A saved snapshot, and a capture whose save waits, for a real pooled "session-a". */
+    private fun captureInFlight(): InFlightCapture {
+        mockkObject(GeckoRuntimeManager)
+        every { GeckoRuntimeManager.getRuntime(any()) } returns mockk(relaxed = true)
+        every { GeckoRuntimeManager.getWebExtensionController() } returns null
+        GeckoSessionManager.setPlaybackAllowed(true)
+        val (module, dir) = newModuleWithRealFilesDir()
+        val queued = mutableListOf<Runnable>()
+        module.snapshotExecutor = java.util.concurrent.Executor { queued += it }
+        val session = GeckoSessionManager.getOrCreateSession("session-a")
+        val bitmap = android.graphics.Bitmap.createBitmap(16, 16, android.graphics.Bitmap.Config.ARGB_8888)
+        val view: GeckoView = mockk(relaxed = true)
+        every { view.width } returns 16
+        every { view.height } returns 16
+        every { view.capturePixels() } returns GeckoResult.fromValue(bitmap)
+        GeckoSessionManager.registerView(session, view)
+        val saved = java.io.File.createTempFile("snapshot-saved", ".png").also { it.deleteOnExit() }
+        module.seedSnapshotForTest("session-a", saved)
+        val promise: Promise = mockk(relaxed = true)
+
+        module.captureSnapshot("session-a", promise)
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        return InFlightCapture(module, dir, saved, queued.single(), bitmap, promise)
+    }
+
+    private fun assertSnapshotsDropped(capture: InFlightCapture, code: String) {
+        capture.save.run()
+
+        verify { capture.promise.reject(eq(code), any<String>()) }
+        verify(exactly = 0) { capture.promise.resolve(any()) }
+        assertTrue(capture.bitmap.isRecycled)
+        assertTrue(capture.module.snapshotsForSessionForTest("session-a").isEmpty())
+        assertFalse("a saved snapshot must not outlive its session", capture.saved.exists())
+        val left = java.io.File(capture.dir, "geckoview_snapshots").listFiles().orEmpty()
+        assertTrue("no screenshot may outlive its session", left.isEmpty())
+        capture.dir.deleteRecursively()
+    }
+
+    @Test
+    fun `shutdown cancels snapshot saves in flight and deletes saved snapshots`() {
+        val capture = captureInFlight()
+
+        capture.module.shutdown()
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        assertTrue(GeckoSessionManager.getAllSessions().isEmpty())
+        assertSnapshotsDropped(capture, "VIEW_NOT_FOUND")
+    }
+
+    @Test
+    fun `a UX restriction cancels snapshot saves in flight and deletes saved snapshots`() {
+        val capture = captureInFlight()
+
+        GeckoSessionManager.setPlaybackAllowed(false)
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        assertTrue(GeckoSessionManager.getAllSessions().isEmpty())
+        // Rejected with the restriction's code, as evaluations in flight are.
+        assertSnapshotsDropped(capture, GeckoSessionManager.PLAYBACK_RESTRICTED)
+    }
+
+    @Test
+    fun `a save finishing after the playback gate closes, before its session does, rejects`() {
+        // The restriction closes sessions from a post to the UI thread; the
+        // snapshot executor can finish a save before that post runs.
+        val dir = java.io.File(
+            System.getProperty("java.io.tmpdir"),
+            "geckoview-test-${java.util.UUID.randomUUID()}",
+        ).also { it.mkdirs() }
+        val ctx: ReactApplicationContext = mockk(relaxed = true)
+        every { ctx.applicationContext } returns ctx
+        val module = GeckoViewModule(ctx).apply { snapshotExecutor = inlineExecutor }
+        // The save reads noBackupFilesDir after its first check and before it
+        // registers the file: close the gate at that point.
+        every { ctx.noBackupFilesDir } answers {
+            GeckoSessionManager.setPlaybackAllowed(false)
+            dir
+        }
+        val (bitmap, _) = stubCapture()
+        val promise: Promise = mockk(relaxed = true)
+
+        module.captureSnapshot("session-a", promise)
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        verify { promise.reject(eq(GeckoSessionManager.PLAYBACK_RESTRICTED), any<String>()) }
+        verify(exactly = 0) { promise.resolve(any()) }
+        assertTrue(module.snapshotsForSessionForTest("session-a").isEmpty())
+        assertTrue(bitmap.isRecycled)
+        val left = java.io.File(dir, "geckoview_snapshots").listFiles().orEmpty()
+        assertTrue("the written file must be deleted", left.isEmpty())
+        dir.deleteRecursively()
     }
 
     // ========== sendEvent / sendViewEvent ==========
@@ -1690,6 +1800,19 @@ class GeckoViewModuleTest {
                 assertEquals("topGeckoPageStart", it.eventName)
             })
         }
+    }
+
+    @Test
+    fun `view events are never coalesced`() {
+        // Codex round 2 on the teardown fixes: a view that binds a playing pooled
+        // session gets activated then play, and coalescing would drop the first.
+        mockkStatic(UIManagerHelper::class)
+        val dispatcher = mockk<com.facebook.react.uimanager.events.EventDispatcher>(relaxed = true)
+        every { UIManagerHelper.getEventDispatcher(any()) } returns dispatcher
+
+        newModule().sendViewEvent(42, "onMediaSessionAction", JavaOnlyMap())
+
+        verify { dispatcher.dispatchEvent(withArg { assertFalse(it.canCoalesce()) }) }
     }
 
     @Test

@@ -30,6 +30,11 @@ class GeckoViewManager :
         super.onDropViewInstance(view)
     }
 
+    override fun onAfterUpdateTransaction(view: GeckoView) {
+        super.onAfterUpdateTransaction(view)
+        impl.onAfterUpdateTransaction(view)
+    }
+
     @ReactProp(name = "sessionKey")
     override fun setSessionKey(view: GeckoView, sessionKey: String?) =
         impl.setSessionKey(view, sessionKey)

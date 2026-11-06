@@ -48,4 +48,8 @@ class GeckoViewContentDelegate(
         }
         module.sendViewEvent(viewId, "onContextMenu", params)
     }
+
+    override fun onCrash(session: GeckoSession) = MediaDelegate.releaseFor(session)
+
+    override fun onKill(session: GeckoSession) = MediaDelegate.releaseFor(session)
 }

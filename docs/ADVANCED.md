@@ -293,9 +293,9 @@ assumes it stays ON.
 
 ### Session Management
 
-*   **Reuse Sessions**: Use `sessionKey` to persist state (cookies, history, cache) across component unmounts. This avoids expensive re-initialization.
+*   **Reuse Sessions**: Use `sessionKey` to persist state (cookies, history, cache) across component unmounts. This avoids expensive re-initialization. A page keeps playing after its view unmounts. With `handleAudioFocus`, the library keeps handling the session's audio focus while no view shows it, until the session closes (`closeSession()`, `shutdown()` or the AAOS playback gate) or its content process dies: it holds focus while the page plays (taking it again if the page starts playing later) and pauses the page on a focus loss. A view that binds the same `sessionKey` carries that focus on without requesting it again, and gets `onMediaSessionAction` events `activated` and `play` for media already active or playing (not `metadata`, which isn't repeated). The carry-over is short when the remount also passes `source`: the view loads that URI into the pooled session, which stops the page's media, and the focus is given up as for any stop.
 *   **Limit Concurrent Sessions**: Each `GeckoSession` consumes significant memory. Close a view's session with `ref.closeSession()`; `ref.shutdown()` tears down the runtime and every session in the process.
-*   **Closed sessions stay closed**: sessions are created and opened only when a mounted view binds its `sessionKey`. After `closeSession()`, ref methods on that view never rebuild the session: `reload`, `goBack`, `goForward`, `stop`, `loadUrl` and `setUserAgent` do nothing, `evaluateJavaScript` rejects with `EVAL_BRIDGE_UNAVAILABLE` and `captureSnapshot` rejects with `VIEW_NOT_FOUND`. Remount the `GeckoView` (for example by changing its React `key`) to get a fresh session.
+*   **Closed sessions stay closed**: sessions are created and opened only when a mounted view binds its `sessionKey`. After `closeSession()`, ref methods on that view never rebuild the session: `reload`, `goBack`, `goForward`, `stop`, `loadUrl` and `setUserAgent` do nothing, `evaluateJavaScript` rejects with `EVAL_BRIDGE_UNAVAILABLE` and `captureSnapshot` rejects with `VIEW_NOT_FOUND`. Remount the `GeckoView` (for example by changing its React `key`) to get a fresh session. A session GeckoView closed itself because its content process died is reopened when a view binds its `sessionKey` again, and loads that view's `source` afresh.
 *   **AAOS playback gate**: while the host has called `GeckoSessionManager.setPlaybackAllowed(false)`, every session is closed and the `sessionKey` and `source` props are dropped, not queued. `setPlaybackAllowed(true)` never reopens a session or resumes media, so remount the `GeckoView` once playback is allowed again.
 
 ### Rendering
@@ -306,7 +306,7 @@ assumes it stays ON.
 ### Memory Leaks
 
 *   **Event Listeners**: Ensure you are not creating closures that hold onto `GeckoView` refs unnecessarily.
-*   **Large Snapshots**: Avoid frequent calls to `captureSnapshot()` with high resolutions, as this creates large Bitmaps in memory. The capture runs on the UI thread and the PNG encode on a background thread; one save runs while one more waits, and a capture beyond that rejects with `SNAPSHOT_BUSY`. A save whose session closes first rejects with `VIEW_NOT_FOUND` and leaves no file behind.
+*   **Large Snapshots**: Avoid frequent calls to `captureSnapshot()` with high resolutions, as this creates large Bitmaps in memory. The capture runs on the UI thread and the PNG encode on a background thread; one save runs while one more waits, and a capture beyond that rejects with `SNAPSHOT_BUSY`. A save still in flight when its session closes rejects with `VIEW_NOT_FOUND`, or with `PLAYBACK_RESTRICTED` once the AAOS playback gate closes, and leaves no file behind. Closing a session, through `closeSession()`, `shutdown()` or the gate, also deletes the snapshots saved for it.
 
 ---
 

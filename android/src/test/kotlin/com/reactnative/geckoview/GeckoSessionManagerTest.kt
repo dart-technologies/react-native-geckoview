@@ -1,6 +1,8 @@
 package com.reactnative.geckoview
 
 import android.content.Context
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
@@ -18,6 +20,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.MediaSession
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
@@ -28,6 +31,7 @@ class GeckoSessionManagerTest {
     private lateinit var context: Context
     private lateinit var mockRuntime: GeckoRuntime
     private lateinit var mockSession: GeckoSession
+    private val registeredModules = mutableListOf<GeckoViewModule>()
 
     @Before
     fun setUp() {
@@ -56,6 +60,8 @@ class GeckoSessionManagerTest {
     
     @After
     fun tearDown() {
+        // The module set is process-wide: don't leave this test's mocks in it.
+        registeredModules.forEach { GeckoSessionManager.unregisterModuleForTest(it) }
         GeckoSessionManager.setPlaybackAllowed(true)
         GeckoSessionManager.closeAllSessions()
         // Clean up all mocks
@@ -290,6 +296,19 @@ class GeckoSessionManagerTest {
     }
 
     @Test
+    fun `a pooled session GeckoView closed itself reopens when a view binds its key`() {
+        // GeckoView closes a session itself when its content process dies; the
+        // pool kept handing that dead session out, so a remounted view stayed
+        // blank.
+        val session = GeckoSessionManager.getOrCreateSession("crashed")
+        session.close()
+
+        assertSame(session, GeckoSessionManager.getOrCreateSession("crashed"))
+        assertTrue(session.isOpen)
+        verify(exactly = 2) { GeckoRuntimeManager.getRuntime(any()) }
+    }
+
+    @Test
     fun `session pooling - reuses sessions correctly`() {
         GeckoSessionManager.init(context)
 
@@ -465,6 +484,94 @@ class GeckoSessionManagerTest {
 
         GeckoSessionManager.closeAllSessions()
         verify(exactly = 1) { restrictedDelegate.release() }
+    }
+
+    @Test
+    fun `a play GeckoView delivers after a close takes no focus that nothing would give back`() {
+        // Opus final gate, LOW: GeckoView posts media events to the UI thread,
+        // and a closed session keeps its delegates, so a play sent just before
+        // closeSession ran after it and requested focus again. The pool had let
+        // the session go, so nothing gave that focus up.
+        TestHelpers.mockArguments()
+        try {
+            val audioManager: AudioManager = mockk(relaxed = true)
+            every { context.getSystemService(Context.AUDIO_SERVICE) } returns audioManager
+            val session = GeckoSessionManager.getOrCreateSession("late")
+            val delegate = MediaDelegate(context, mockk(relaxed = true), true, 1)
+            session.mediaSessionDelegate = delegate
+            val media: MediaSession = mockk(relaxed = true)
+            delegate.onPlay(session, media)
+            // The view is dropped mid-playback, then the host closes the session.
+            delegate.detachFromView()
+            GeckoSessionManager.releaseSession("late")
+            assertFalse(session.isOpen)
+            assertSame(delegate, session.mediaSessionDelegate)
+
+            delegate.onPlay(session, media)
+
+            verify(exactly = 1) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
+            verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+        } finally {
+            TestHelpers.unmockArguments()
+        }
+    }
+
+    /** A mock module registered for close reports, unregistered in tearDown. */
+    private fun registeredModule(): GeckoViewModule =
+        mockk<GeckoViewModule>(relaxed = true).also {
+            GeckoSessionManager.registerModule(it)
+            registeredModules += it
+        }
+
+    @Test
+    fun `every close path reports the sessions it closes to registered modules`() {
+        // Codex final review F2: shutdown and the UX restriction close sessions
+        // here, not through closeSession, so the module's snapshot cleanup
+        // never ran for them.
+        val module = registeredModule()
+        GeckoSessionManager.getOrCreateSession("closed-alone")
+        GeckoSessionManager.getOrCreateSession("closed-together-1")
+        GeckoSessionManager.getOrCreateSession("closed-together-2")
+
+        GeckoSessionManager.releaseSession("closed-alone")
+        verify(exactly = 1) { module.onSessionClosing("closed-alone") }
+
+        GeckoSessionManager.closeAllSessions()
+        verify(exactly = 1) { module.onSessionClosing("closed-together-1") }
+        verify(exactly = 1) { module.onSessionClosing("closed-together-2") }
+        verify(exactly = 1) { module.onSessionClosing("closed-alone") }
+    }
+
+    @Test
+    fun `modules hear of a session closing while it is still open`() {
+        // A save that registers its file between the close and the report
+        // would resolve for a closed session.
+        val module = registeredModule()
+        val openWhenReported = mutableListOf<Boolean>()
+        every { module.onSessionClosing(any()) } answers {
+            openWhenReported += GeckoSessionManager.getOpenSession(firstArg()) != null
+        }
+        GeckoSessionManager.getOrCreateSession("closed-alone")
+        GeckoSessionManager.getOrCreateSession("closed-together")
+
+        GeckoSessionManager.releaseSession("closed-alone")
+        GeckoSessionManager.closeAllSessions()
+
+        assertEquals(listOf(true, true), openWhenReported)
+    }
+
+    @Test
+    fun `a module that fails to clean up doesn't keep the others from it, or the sessions from closing`() {
+        // An Error too: on the restriction path it would end the UI thread.
+        val failing = registeredModule()
+        every { failing.onSessionClosing(any()) } throws Error("cleanup failed")
+        val module = registeredModule()
+        GeckoSessionManager.getOrCreateSession("closed")
+
+        GeckoSessionManager.closeAllSessions()
+
+        verify(exactly = 1) { module.onSessionClosing("closed") }
+        assertTrue(GeckoSessionManager.getAllSessions().isEmpty())
     }
 
     @Test
