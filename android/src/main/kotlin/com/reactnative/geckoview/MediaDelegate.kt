@@ -70,6 +70,12 @@ class MediaDelegate(
 
     override fun onPlay(session: GeckoSession, mediaSession: MediaSession) {
         GeckoLog.d(TAG, "onPlay called for MediaSession")
+        // GeckoView posts media events to the UI thread, and a closed session
+        // keeps its delegates, so a play sent just before the library closes
+        // the session (closeSession, shutdown, the playback gate) can run
+        // after the close. Focus taken then would never be given back:
+        // [release] has already run, and no pause or stop follows.
+        if (!session.isOpen) return
         activeMediaSession = mediaSession
         
         if (handleAudioFocus) {
@@ -112,6 +118,9 @@ class MediaDelegate(
 
     override fun onActivated(session: GeckoSession, mediaSession: MediaSession) {
         GeckoLog.d(TAG, "onActivated called for MediaSession")
+        // Likewise for a late activation: the view still showing the closed
+        // session would be told its media is active.
+        if (!session.isOpen) return
         activated = true
         // Don't request focus on activation, wait for actual play event
         val params = Arguments.createMap().apply {
@@ -155,7 +164,7 @@ class MediaDelegate(
      * session that owns this delegate closes mid-playback, including when
      * GeckoView closed it itself: no onPause/onStop is guaranteed to arrive
      * afterwards, so focus taken in [onPlay] would otherwise be held until the
-     * process dies.
+     * process dies. A play or activation delivered after the close is ignored.
      */
     fun release() {
         activeMediaSession = null

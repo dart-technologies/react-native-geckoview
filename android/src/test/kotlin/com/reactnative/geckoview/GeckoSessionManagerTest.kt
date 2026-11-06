@@ -1,6 +1,8 @@
 package com.reactnative.geckoview
 
 import android.content.Context
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
@@ -18,6 +20,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.MediaSession
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
@@ -481,6 +484,36 @@ class GeckoSessionManagerTest {
 
         GeckoSessionManager.closeAllSessions()
         verify(exactly = 1) { restrictedDelegate.release() }
+    }
+
+    @Test
+    fun `a play GeckoView delivers after a close takes no focus that nothing would give back`() {
+        // Opus final gate, LOW: GeckoView posts media events to the UI thread,
+        // and a closed session keeps its delegates, so a play sent just before
+        // closeSession ran after it and requested focus again. The pool had let
+        // the session go, so nothing gave that focus up.
+        TestHelpers.mockArguments()
+        try {
+            val audioManager: AudioManager = mockk(relaxed = true)
+            every { context.getSystemService(Context.AUDIO_SERVICE) } returns audioManager
+            val session = GeckoSessionManager.getOrCreateSession("late")
+            val delegate = MediaDelegate(context, mockk(relaxed = true), true, 1)
+            session.mediaSessionDelegate = delegate
+            val media: MediaSession = mockk(relaxed = true)
+            delegate.onPlay(session, media)
+            // The view is dropped mid-playback, then the host closes the session.
+            delegate.detachFromView()
+            GeckoSessionManager.releaseSession("late")
+            assertFalse(session.isOpen)
+            assertSame(delegate, session.mediaSessionDelegate)
+
+            delegate.onPlay(session, media)
+
+            verify(exactly = 1) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
+            verify(exactly = 1) { audioManager.abandonAudioFocusRequest(any<AudioFocusRequest>()) }
+        } finally {
+            TestHelpers.unmockArguments()
+        }
     }
 
     /** A mock module registered for close reports, unregistered in tearDown. */

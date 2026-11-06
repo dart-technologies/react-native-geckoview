@@ -51,6 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   request: on a pause or stop, a new request, or `handleAudioFocus` turning
   off. The page used to stay silent, since no `AUDIOFOCUS_GAIN` reaches a
   request that was given up.
+- A media play or activation that GeckoView delivers after its session closed
+  is ignored. A play sent just before `closeSession`, shutdown or the AAOS
+  playback gate used to request audio focus again, which nothing gave back,
+  and a late play or activation still reached JS.
 - View events are never coalesced, so two in a row for one view (such as the
   `activated` and `play` a view gets when it binds a playing session) both
   reach JS.

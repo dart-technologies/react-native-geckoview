@@ -45,6 +45,9 @@ class MediaDelegateTest {
         context = mockk(relaxed = true)
         every { context.getSystemService(Context.AUDIO_SERVICE) } returns audioManager
         every { context.applicationContext } returns context
+        // The pool hands views open sessions; a relaxed mock would report
+        // closed, and the delegate ignores a closed session's play.
+        every { session.isOpen } returns true
     }
 
     @After
@@ -245,6 +248,27 @@ class MediaDelegateTest {
         mediaDelegate.attachToView(nextModule, testViewId + 1)
 
         verify(exactly = 1) { nextModule.sendViewEvent(testViewId + 1, "onMediaSessionAction", any()) }
+    }
+
+    @Test
+    fun `media events delivered after the session closed leave nothing behind`() {
+        // GeckoView posts media events to the UI thread, so an activation or a
+        // play sent just before a close can run after it. Neither may take
+        // focus that nothing would give back, reach the view, or be told to a
+        // view that binds the session once the pool reopens it.
+        mediaDelegate = MediaDelegate(context, module, true, testViewId)
+        mediaDelegate.release()
+        every { session.isOpen } returns false
+
+        mediaDelegate.onActivated(session, mediaSession)
+        mediaDelegate.onPlay(session, mediaSession)
+
+        verify(exactly = 0) { audioManager.requestAudioFocus(any<AudioFocusRequest>()) }
+        verify(exactly = 0) { module.sendViewEvent(any(), any(), any()) }
+        every { session.isOpen } returns true
+        val nextModule: GeckoViewModule = mockk(relaxed = true)
+        mediaDelegate.attachToView(nextModule, testViewId + 1)
+        verify(exactly = 0) { nextModule.sendViewEvent(any(), any(), any()) }
     }
 
     @Test
