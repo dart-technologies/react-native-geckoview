@@ -10,9 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Align the library and independently buildable example with React Native
   0.88, React 19.3, TypeScript 6, Gradle 9.4.1 and AGP 9.2.1.
-- Pin GeckoView 159.0.20261022150525, Kotlin 2.4.20 and Media3 1.11.1 in
+- Pin GeckoView 160.0.20261104181552, Kotlin compiler 2.4.20, Kotlin stdlib
+  2.4.21 and Media3 1.11.1 in
   `android/versions.json`. GeckoView requires Android compile SDK 37.2;
   the target remains API 36 and the minimum remains API 26.
+- Keep the compiler and stdlib pins separate: Expo Modules v2 publishes its
+  compiler plugin for Kotlin 2.4.20, while GeckoView 160 depends on stdlib
+  2.4.21. The app verifies the selected runtime graph before release builds.
 - Use public React Native component registration and host dependency alignment.
 - Close native sessions when AAOS playback is disallowed, keep a manual resume
   authorization latch, and remove released views from the weak session registry.

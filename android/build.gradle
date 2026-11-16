@@ -16,7 +16,7 @@ def DEFAULT_TARGET_SDK_VERSION = 36
 //   97.0.20220304162637  - previous stable pin
 //   143.0.20250908174027 - upgraded 2025-12-02
 //   150.0.20260415192539 - upgraded 2026-04-22
-//   159.0.20261022150525 - SDK 58 / Android 37.2 baseline
+//   160.0.20261104181552 - SDK 58 / Android 37.2 security update
 // See: https://mozilla.github.io/geckoview/javadoc/mozilla-central/org/mozilla/geckoview/doc-files/CHANGELOG
 def nativeVersions = new groovy.json.JsonSlurper().parse(file('versions.json'))
 def DEFAULT_GECKOVIEW_VERSION = nativeVersions.geckoview
