@@ -7,8 +7,10 @@ recorded in [CHANGELOG.md](../CHANGELOG.md); this file tracks what's left.
 
 ## SDK 58 integration baseline
 
-The current Dart TV integration uses RN 0.88 / React 19.3, GeckoView 159,
-Kotlin 2.4.20 and Media3 1.11.1. See `android/versions.json` and the
+The current Dart TV integration uses RN 0.88 / React 19.3, GeckoView 160,
+Kotlin compiler 2.4.20 / stdlib 2.4.21 and Media3 1.11.1. Expo's compiler
+plugin requires the published 2.4.20 build; the runtime follows Gecko's POM.
+See `android/versions.json` and the
 unreleased changelog for authoritative pins and the removed cookie-banner API.
 The Android compile SDK is 37.2 because the GeckoView AAR declares that minimum;
 target API 36 and min API 26 are unchanged. The historical shipped baseline
